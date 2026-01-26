@@ -10,6 +10,7 @@ module.exports = {
                 .setName('user')
                 .setDescription('User to check (defaults to you)')
                 .setRequired(false)),
+    category: 'Currency',
     async execute(interaction) {
         const dbClient = await connectToDatabase();
         const db = dbClient.db('discord');

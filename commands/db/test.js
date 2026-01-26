@@ -11,6 +11,7 @@ module.exports = {
                 .setName('message')
                 .setDescription('string to store')
                 .setRequired(true)),
+    category: 'Database',
     async execute(interaction) {
         const dbClient = await connectToDatabase();
         const message = interaction.options.getString('message');

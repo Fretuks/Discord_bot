@@ -5,6 +5,7 @@ module.exports = {
     data: new SlashCommandBuilder()
         .setName("quiz")
         .setDescription("Start a cool quiz"),
+    category: 'Games',
     async execute(interaction) {
         const item = quiz[Math.floor(Math.random() * quiz.length)];
         await interaction.reply({

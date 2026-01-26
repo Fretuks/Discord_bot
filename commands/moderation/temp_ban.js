@@ -1,15 +1,16 @@
-const { SlashCommandBuilder, EmbedBuilder } = require("discord.js");
+const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits } = require("discord.js");
 const { connectToDatabase } = require('../../db.js');
 
 module.exports = {
     mod: true,
     data: new SlashCommandBuilder()
         .setName("temp-ban")
-        .setDescription("Kick misbehaving people")
+        .setDescription("Temporarily ban a member.")
+        .setDefaultMemberPermissions(PermissionFlagsBits.BanMembers)
         .addUserOption(option =>
             option
                 .setName('target')
-                .setDescription('The member to kick')
+                .setDescription('The member to ban')
                 .setRequired(true))
         .addIntegerOption(option =>
             option
@@ -26,6 +27,7 @@ module.exports = {
             .setName('delete-messages')
             .setDescription('Number of days to delete messages')
             .setMinValue(0).setMaxValue(7)),
+    category: 'Moderation',
     async execute(interaction) {
         const user = interaction.options.getUser('target');
         const reason = interaction.options.getString('reason');
