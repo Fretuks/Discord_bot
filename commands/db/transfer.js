@@ -16,6 +16,7 @@ module.exports = {
                 .setDescription('Amount of coins to send')
                 .setMinValue(1)
                 .setRequired(true)),
+    category: 'Currency',
     async execute(interaction) {
         const dbClient = await connectToDatabase();
         const db = dbClient.db('discord');
