@@ -25,6 +25,7 @@ module.exports = {
                     { name: 'Full date and time with weekday', value: 'F' },
                     { name: 'Relative time', value: 'R' },
                 )),
+    category: 'Utility',
     async execute(interaction) {
         // Get user input
         const dateInput = interaction.options.getString('date');
