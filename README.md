@@ -6,16 +6,16 @@ Im going to make a To-do List for the features i want to implement for my Bot.
 (I will try to make these tools optional, because alot of bots already feature them)
 
 1. **Basic Commands**
-   - [x] Add a `!help` command to display a list of available commands.
-   - [x] Implement a `!ping` command to check bot responsiveness.
-   - [ **Only Text missing** ] Add a `!about` command to describe the bot's purpose.
+   - [x] Add a `/help` command to display a list of available commands.
+   - [x] Implement a `/ping` command to check bot responsiveness.
+   - [x] Add an `/about` command to describe the bot's purpose.
 
 2. **Role Management**
    - [ ] Set up a self-assignable role system (e.g., using reaction roles).
    - [ ] Allow admins to assign/remove roles with commands.
 
 3. **Moderation Tools**
-   - [ ] Add commands to mute, x kick, and x temp_ban users.
+   - [x] Add commands to mute, kick, and temp_ban users.
    - [ ] Create an auto-moderation feature to delete spam or inappropriate content.
    - [ ] Implement a warning system with a strike counter.
 
@@ -23,23 +23,23 @@ Im going to make a To-do List for the features i want to implement for my Bot.
 
 #### **Unique Features**
 1. **Currency System**
-   - [ ] Design a virtual currency system with basic commands:
-     - [ ] `!balance` to check currency balance.
-     - [ ] `!earn` to earn daily or periodic rewards.
-     - [ ] `!transfer @user [amount]` to send currency to another user.
+   - [x] Design a virtual currency system with basic commands:
+     - [x] `/balance` to check currency balance.
+     - [x] `/earn` to earn daily or periodic rewards.
+     - [x] `/transfer @user [amount]` to send currency to another user.
    - [ ] Link the currency system to role management:
      - [ ] Allow users to purchase roles using the currency with a command (e.g., `!buyrole [role name]`).
 
 2. **Datetime Converter**
    (Still in Progress, maybe i'll add visual Menu)
    - [x] Create a command to convert timezones:
-     - [x] `!convert [time] [timezone] to [timezone]` to handle conversions.
-     - [x] Support both 12-hour and 24-hour formats.
+     - [x] `/timestamp [date]` to generate Discord timestamps.
+     - [x] Support multiple Discord timestamp formats.
    - [ ] Include a command to display server-specific or user-specific timezones.
 
 3. **Minigames**
    - [ ] Implement a Quiz Game:
-     - [ ] Add a `!quiz` command to start the game.
+     - [x] Add a `/quiz` command to start the game.
      - [ ] Provide multiple-choice or true/false questions.
      - [ ] Award virtual currency for correct answers.
    - [ ] Add a simple number-guessing game (e.g., `!guess [number]`).
@@ -49,8 +49,8 @@ Im going to make a To-do List for the features i want to implement for my Bot.
 
 #### **Utility Tools**
 1. **Search and Lookups**
-   - [ ] Add a `!wiki [topic]` command to fetch summaries from Wikipedia.
-   - [ ] Include a `!weather [location]` command for weather updates.
+   - [x] Add a `/wiki [topic]` command to fetch summaries from Wikipedia.
+   - [x] Include a `/weather [location]` command for weather updates.
 
 ---
 

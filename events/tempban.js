@@ -1,5 +1,5 @@
-const {Events} = require('discord.js');
-const {connectToDatabase} = require('../db.js');
+const { Events } = require('discord.js');
+const { connectToDatabase } = require('../db.js');
 
 module.exports = {
     name: Events.ClientReady,
@@ -7,50 +7,38 @@ module.exports = {
         const dbClient = await connectToDatabase();
         const db = dbClient.db('discord');
         const tempBanCollection = db.collection('tempban');
-        const scheduled = new Map();
-        async function unbanNow(banData) {
-            try {
-                const guild = await client.guilds.fetch(banData.guildId);
-                await guild.bans.remove(banData.userId);
-                await tempBanCollection.deleteOne({_id: banData._id});
-            } catch (err) {
-                console.error('Error unbanning member:', err);
-            } finally {
-                scheduled.delete(String(banData._id));
-            }
-        }
 
-        function scheduleUnban(banData) {
-            const id = String(banData._id);
-            if (scheduled.has(id)) return;
+        // 2) Define a function to schedule unbans
+        async function scheduleUnban(banData) {
+            const delay = banData.banTime - Date.now();
 
-            const delay = banData.banTime - Date.now(); // assumes banTime is a future timestamp (ms)
             if (delay <= 0) {
-                // already expired -> unban immediately
-                void unbanNow(banData);
                 return;
             }
+            setTimeout(async () => {
+                try {
+                    const guild = await client.guilds.fetch(banData.guildId);
+                    await guild.bans.remove(banData.userId);
 
-            const timeoutId = setTimeout(() => void unbanNow(banData), delay);
-            scheduled.set(id, timeoutId);
+                    await tempBanCollection.deleteOne({ _id: banData._id });
+                } catch (err) {
+                    console.error('Error unbanning member:', err);
+                }
+            }, delay);
         }
 
-        async function scanAndSchedule() {
-            try {
-                const now = Date.now();
-                const futureBans = await tempBanCollection.find({banTime: {$gt: now}}).toArray();
-                futureBans.forEach(scheduleUnban);
-                const expired = await tempBanCollection.find({banTime: {$lte: now}}).toArray();
-                expired.forEach((b) => void unbanNow(b));
-            } catch (err) {
-                console.error('Error scanning tempbans:', err);
-            }
+        try {
+            const allBans = await tempBanCollection.find({}).toArray();
+            allBans.forEach(scheduleUnban);
+
+            tempBanCollection.watch().on('change', (change) => {
+                if (change.operationType === 'insert') {
+                    const newBan = change.fullDocument;
+                    scheduleUnban(newBan);
+                }
+            });
+        } catch (err) {
+            console.error('Error setting up unban system:', err);
         }
-
-        // Initial load
-        await scanAndSchedule();
-
-        // Poll every 10 seconds for newly inserted bans
-        setInterval(scanAndSchedule, 10_000);
     },
 };

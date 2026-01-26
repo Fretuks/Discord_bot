@@ -22,6 +22,7 @@ module.exports = {
     data: new SlashCommandBuilder()
         .setName('earn')
         .setDescription('Claim your daily coin reward.'),
+    category: 'Currency',
     async execute(interaction) {
         const dbClient = await connectToDatabase();
         const db = dbClient.db('discord');

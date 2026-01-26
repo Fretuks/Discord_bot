@@ -17,6 +17,7 @@ module.exports = {
                 .setName('target')
                 .setDescription('User to receive coins')
                 .setRequired(true)),
+    category: 'Currency',
     async execute(interaction) {
         const dbClient = await connectToDatabase();
         const target = interaction.options.getUser('target');
