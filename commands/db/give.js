@@ -1,37 +1,45 @@
-// exampleCommand.js
-const { SlashCommandBuilder } = require('discord.js');
+const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
 const { connectToDatabase } = require('../../db.js');
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('give')
-        .setDescription('give somebody coins')
+        .setDescription('Admin: grant coins to a user.')
+        .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
         .addIntegerOption(option =>
             option
                 .setName('amount')
-                .setDescription('amount of the coins')
+                .setDescription('Amount of coins to give')
+                .setMinValue(1)
                 .setRequired(true))
         .addUserOption(option =>
-            option.setName('target')
-                .setDescription('The user to give coins to')
+            option
+                .setName('target')
+                .setDescription('User to receive coins')
                 .setRequired(true)),
     async execute(interaction) {
         const dbClient = await connectToDatabase();
         const target = interaction.options.getUser('target');
         const amount = interaction.options.getInteger('amount');
 
-        // Choose a DB + Collection
+        if (target.bot) {
+            return interaction.reply({
+                content: 'You cannot grant coins to bot accounts.',
+                ephemeral: true,
+            });
+        }
+
         const db = dbClient.db('discord');
         const collection = db.collection('currency');
 
-        let targetData = await collection.findOne({ userID: target.id });
-        if (!targetData) {
-            await collection.insertOne({ userID: target.id, balance: 0 });
-        }
+        await collection.updateOne(
+            { userID: target.id },
+            { $inc: { balance: amount } },
+            { upsert: true }
+        );
 
-        // Perform the transaction: subtract from sender and add to target.
-        await collection.updateOne({ userID: target.id }, { $inc: { balance: amount } }, { upsert: true });
-
-        return interaction.reply({ content: `You have given ${amount} coins to ${target.tag}.` });
+        return interaction.reply({
+            content: `You granted **${amount}** coins to ${target.tag}.`,
+        });
     }
 };
