@@ -1,10 +1,22 @@
 [
   {
-    "question": "What color is the sky?",
+    "question": "What color is the clear daytime sky?",
+    "choices": ["Blue", "Green", "Red", "Yellow"],
     "answers": ["blue"]
   },
   {
-    "question": "How many letters are there in the alphabet?",
-    "answers": ["26", "twenty-six", "twenty six", "twentysix"]
+    "question": "How many letters are there in the English alphabet?",
+    "choices": ["24", "25", "26", "27"],
+    "answers": ["26"]
+  },
+  {
+    "question": "True or False: The Earth orbits the Sun.",
+    "choices": ["True", "False"],
+    "answers": ["true"]
+  },
+  {
+    "question": "Which planet is known as the Red Planet?",
+    "choices": ["Mars", "Venus", "Jupiter", "Mercury"],
+    "answers": ["mars"]
   }
 ]
