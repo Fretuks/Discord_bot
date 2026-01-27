@@ -12,7 +12,7 @@ Im going to make a To-do List for the features i want to implement for my Bot.
 
 2. **Role Management**
    - [ ] Set up a self-assignable role system (e.g., using reaction roles).
-   - [ ] Allow admins to assign/remove roles with commands.
+   - [x] Allow admins to assign/remove roles with commands.
 
 3. **Moderation Tools**
    - [x] Add commands to mute, kick, and temp_ban users.
