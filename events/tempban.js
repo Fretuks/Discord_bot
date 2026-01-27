@@ -1,5 +1,6 @@
 const { Events } = require('discord.js');
 const { connectToDatabase } = require('../db.js');
+const { clearBanStatus } = require('../services/moderationRecords');
 
 module.exports = {
     name: Events.ClientReady,
@@ -30,6 +31,10 @@ module.exports = {
                     await guild.bans.remove(banData.userId);
 
                     await tempBanCollection.deleteOne({ _id: banData._id });
+                    await clearBanStatus({
+                        guildId: banData.guildId,
+                        userId: banData.userId,
+                    });
                 } catch (err) {
                     console.error('Error unbanning member:', err);
                 } finally {

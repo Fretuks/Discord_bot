@@ -1,5 +1,6 @@
 const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits } = require("discord.js");
 const { connectToDatabase } = require('../../db.js');
+const { recordModerationAction } = require('../../services/moderationRecords');
 
 module.exports = {
     mod: true,
@@ -73,11 +74,24 @@ module.exports = {
             const tempBanCollection = db.collection("tempban");
 
             // 3. Insert the ban record
-            await tempBanCollection.insertOne({
+            const banRecord = {
                 guildId: interaction.guild.id,
                 userId: user.id,
                 banTime: banUntil,
                 reason: reason,
+            };
+            await tempBanCollection.insertOne(banRecord);
+            await recordModerationAction({
+                guildId: interaction.guild.id,
+                userId: user.id,
+                action: 'temp-ban',
+                moderatorId: interaction.user.id,
+                reason,
+                metadata: { durationMs: durationms },
+                stateUpdates: {
+                    isBanned: true,
+                    bannedUntil: new Date(banUntil),
+                },
             });
         } catch (err) {
             console.error(err);
