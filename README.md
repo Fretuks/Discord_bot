@@ -40,8 +40,8 @@ Im going to make a To-do List for the features i want to implement for my Bot.
 3. **Minigames**
    - [ ] Implement a Quiz Game:
      - [x] Add a `/quiz` command to start the game.
-     - [ ] Provide multiple-choice or true/false questions.
-     - [ ] Award virtual currency for correct answers.
+     - [x] Provide multiple-choice or true/false questions.
+     - [x] Award virtual currency for correct answers.
    - [ ] Add a simple number-guessing game (e.g., `!guess [number]`).
    - [ ] Create a leaderboard for game winners.
 
