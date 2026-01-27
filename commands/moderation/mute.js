@@ -1,4 +1,5 @@
 const { SlashCommandBuilder, PermissionFlagsBits } = require("discord.js");
+const { recordModerationAction } = require('../../services/moderationRecords');
 
 module.exports = {
     permissionGroup: 'moderation',
@@ -39,6 +40,15 @@ module.exports = {
         }
 
         await member.timeout(durationMs, reason);
+        await recordModerationAction({
+            guildId: interaction.guildId,
+            userId: target.id,
+            action: 'mute',
+            moderatorId: interaction.user.id,
+            reason,
+            metadata: { durationMinutes: duration },
+            stateUpdates: { mutedUntil: new Date(Date.now() + durationMs) },
+        });
 
         return interaction.reply({
             content: `Muted ${target.tag} for **${duration} minutes**. Reason: ${reason}`,

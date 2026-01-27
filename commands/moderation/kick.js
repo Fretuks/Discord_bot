@@ -1,4 +1,5 @@
 const { SlashCommandBuilder, PermissionFlagsBits } = require("discord.js");
+const { recordModerationAction } = require('../../services/moderationRecords');
 
 module.exports = {
     permissionGroup: 'moderation',
@@ -31,6 +32,14 @@ module.exports = {
             }
 
             await member.kick(reason);
+            await recordModerationAction({
+                guildId: interaction.guildId,
+                userId: user.id,
+                action: 'kick',
+                moderatorId: interaction.user.id,
+                reason,
+                metadata: {},
+            });
 
             await interaction.reply(`Kicked ${user.tag} for: ${reason}`);
         } catch (error) {
