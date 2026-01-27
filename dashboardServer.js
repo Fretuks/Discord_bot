@@ -143,6 +143,22 @@ const ensureOAuthConfig = () => {
     };
 };
 
+const getDiscordStatusCode = (error) => {
+    const status = error?.response?.status;
+    return typeof status === 'number' ? status : null;
+};
+
+const sendDiscordApiError = (res, error, fallbackMessage) => {
+    const status = getDiscordStatusCode(error);
+    if (status === 401 || status === 403) {
+        return res.status(401).json({error: 'Discord authentication expired'});
+    }
+    if (status === 429) {
+        return res.status(503).json({error: 'Discord rate limit exceeded'});
+    }
+    return res.status(502).json({error: fallbackMessage});
+};
+
 const buildAuthorizationUrl = (state) => {
     const params = new URLSearchParams({
         client_id: DISCORD_CLIENT_ID,
@@ -287,7 +303,7 @@ const ensureManageableGuild = async (req, res, next) => {
         req.guild = guild;
         return next();
     } catch (error) {
-        return res.status(502).json({error: 'Failed to fetch guilds'});
+        return sendDiscordApiError(res, error, 'Failed to fetch guilds');
     }
 };
 
@@ -386,7 +402,7 @@ const createDashboardApp = () => {
             const manageableGuilds = guilds.filter(canManageGuild);
             return res.json({guilds: manageableGuilds});
         } catch (error) {
-            return res.status(502).json({error: 'Failed to fetch guilds'});
+            return sendDiscordApiError(res, error, 'Failed to fetch guilds');
         }
     });
 
