@@ -260,6 +260,7 @@ const createDashboardApp = () => {
     const app = express();
 
     app.use(express.json());
+    app.use(express.static(path.join(__dirname, 'public')));
 
     app.get('/auth/discord', (req, res) => {
         if (!ensureOAuthConfig()) {
@@ -311,6 +312,10 @@ const createDashboardApp = () => {
 
             if (DASHBOARD_CLIENT_URL) {
                 return res.redirect(DASHBOARD_CLIENT_URL);
+            }
+
+            if (req.accepts('html')) {
+                return res.redirect('/');
             }
 
             return res.status(200).json({ user });
