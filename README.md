@@ -17,7 +17,7 @@ Im going to make a To-do List for the features i want to implement for my Bot.
 3. **Moderation Tools**
    - [x] Add commands to mute, kick, and temp_ban users.
    - [ ] Create an auto-moderation feature to delete spam or inappropriate content.
-   - [ ] Implement a warning system with a strike counter.
+   - [x] Implement a warning system with a strike counter.
 
 ---
 
