@@ -26,6 +26,27 @@ const getGuildPermissions = async (guildId) => {
     return normalizePermissionConfig(config);
 };
 
+const updateGuildPermissions = async ({ guildId, permissions }) => {
+    if (!guildId) {
+        throw new Error('Guild ID is required');
+    }
+
+    const dbClient = await connectToDatabase();
+    const db = dbClient.db('discord');
+    const collection = db.collection('guild_permissions');
+
+    const normalizedPermissions = normalizePermissionConfig(permissions);
+    const payload = {
+        guildId,
+        ...normalizedPermissions,
+        updatedAt: new Date(),
+    };
+
+    await collection.updateOne({ guildId }, { $set: payload }, { upsert: true });
+
+    return payload;
+};
+
 const isCommandAllowed = async ({
     guildId,
     userId,
@@ -69,5 +90,6 @@ const isCommandAllowed = async ({
 
 module.exports = {
     getGuildPermissions,
+    updateGuildPermissions,
     isCommandAllowed,
 };
