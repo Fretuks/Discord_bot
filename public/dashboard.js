@@ -35,7 +35,8 @@ const elements = {
     warningStatus: document.getElementById('warningStatus'),
 };
 
-const {fetchJson, setBanner, clearBanner, formatUserDisplay} = window.dashboardApi;
+const dashboardApi = window.dashboardApi;
+const fetchDashboardJson = dashboardApi.fetchJson;
 
 const COMMAND_NAME_REGEX = /^[a-z0-9_-]{1,32}$/i;
 
@@ -246,8 +247,8 @@ const renderCommandsTable = () => {
 };
 
 const loadSession = async () => {
-    const data = await fetchJson('/api/me');
-    elements.userDisplay.textContent = formatUserDisplay(data.user);
+    const data = await fetchDashboardJson('/api/me');
+    elements.userDisplay.textContent = dashboardApi.formatUserDisplay(data.user);
     if (data.expiresAt) {
         const expires = new Date(data.expiresAt);
         elements.sessionExpiry.textContent = `Session expires ${expires.toLocaleString()}`;
@@ -255,7 +256,7 @@ const loadSession = async () => {
 };
 
 const loadGuilds = async () => {
-    const data = await fetchJson('/api/guilds');
+    const data = await fetchDashboardJson('/api/guilds');
     state.guilds = data.guilds || [];
     if (state.guilds.length > 0) {
         state.selectedGuildId = state.guilds[0].id;
@@ -270,9 +271,9 @@ const loadGuildDetails = async () => {
     setLoading(true);
     try {
         const [permissionsData, rolesData, commandsData] = await Promise.all([
-            fetchJson(`/api/guilds/${state.selectedGuildId}/permissions`),
-            fetchJson(`/api/guilds/${state.selectedGuildId}/roles`),
-            fetchJson(`/api/guilds/${state.selectedGuildId}/commands`),
+            fetchDashboardJson(`/api/guilds/${state.selectedGuildId}/permissions`),
+            fetchDashboardJson(`/api/guilds/${state.selectedGuildId}/roles`),
+            fetchDashboardJson(`/api/guilds/${state.selectedGuildId}/commands`),
         ]);
 
         state.permissions = permissionsData.permissions || {
@@ -294,9 +295,9 @@ const loadGuildDetails = async () => {
         renderAdminUsers();
         renderCommandsTable();
         elements.permissionsStatus.textContent = '';
-        clearBanner(elements.banner);
+        dashboardApi.clearBanner(elements.banner);
     } catch (error) {
-        setBanner(elements.banner, error.message || 'Failed to load guild data.');
+        dashboardApi.setBanner(elements.banner, error.message || 'Failed to load guild data.');
     } finally {
         setLoading(false);
     }
@@ -326,7 +327,7 @@ const addCommand = () => {
         return;
     }
     if (!COMMAND_NAME_REGEX.test(value)) {
-        setBanner(elements.banner, 'Command name must be 1-32 characters and use letters, numbers, - or _.');
+        dashboardApi.setBanner(elements.banner, 'Command name must be 1-32 characters and use letters, numbers, - or _.');
         return;
     }
     if (!state.commands.includes(value)) {
@@ -352,18 +353,18 @@ const savePermissions = async () => {
 
     setLoading(true);
     try {
-        const data = await fetchJson(`/api/guilds/${state.selectedGuildId}/permissions`, {
+        const data = await fetchDashboardJson(`/api/guilds/${state.selectedGuildId}/permissions`, {
             method: 'PATCH',
             body: JSON.stringify(payload),
         });
         state.permissions = data.permissions;
         elements.permissionsStatus.textContent = 'Permissions saved successfully.';
-        setBanner(elements.banner, 'Permissions updated successfully.', 'success');
+        dashboardApi.setBanner(elements.banner, 'Permissions updated successfully.', 'success');
         renderRolesSelect();
         renderAdminUsers();
         renderCommandsTable();
     } catch (error) {
-        setBanner(elements.banner, error.message || 'Failed to save permissions.');
+        dashboardApi.setBanner(elements.banner, error.message || 'Failed to save permissions.');
     } finally {
         setLoading(false);
     }
@@ -380,12 +381,12 @@ const switchTab = (tabName) => {
 const fetchWarnings = async () => {
     const userId = elements.warningsUserInput.value.trim();
     if (!userId) {
-        setBanner(elements.banner, 'Enter a user ID to fetch warnings.');
+        dashboardApi.setBanner(elements.banner, 'Enter a user ID to fetch warnings.');
         return;
     }
     setLoading(true);
     try {
-        const data = await fetchJson(`/api/guilds/${state.selectedGuildId}/warnings/${userId}`);
+        const data = await fetchDashboardJson(`/api/guilds/${state.selectedGuildId}/warnings/${userId}`);
         const warnings = data.warnings || [];
         elements.warningsList.innerHTML = '';
         if (warnings.length === 0) {
@@ -399,9 +400,9 @@ const fetchWarnings = async () => {
                 elements.warningsList.appendChild(item);
             });
         }
-        clearBanner(elements.banner);
+        dashboardApi.clearBanner(elements.banner);
     } catch (error) {
-        setBanner(elements.banner, error.message || 'Failed to fetch warnings.');
+        dashboardApi.setBanner(elements.banner, error.message || 'Failed to fetch warnings.');
     } finally {
         setLoading(false);
     }
@@ -417,15 +418,15 @@ const addWarning = async () => {
 
     setLoading(true);
     try {
-        const data = await fetchJson(`/api/guilds/${state.selectedGuildId}/warnings/${userId}`, {
+        const data = await fetchDashboardJson(`/api/guilds/${state.selectedGuildId}/warnings/${userId}`, {
             method: 'POST',
             body: JSON.stringify({reason}),
         });
         elements.warningStatus.textContent = `Warning added. Total warnings: ${data.warnings?.length || 0}`;
         elements.warningReasonInput.value = '';
-        clearBanner(elements.banner);
+        dashboardApi.clearBanner(elements.banner);
     } catch (error) {
-        setBanner(elements.banner, error.message || 'Failed to add warning.');
+        dashboardApi.setBanner(elements.banner, error.message || 'Failed to add warning.');
     } finally {
         setLoading(false);
     }
@@ -439,7 +440,7 @@ const initDashboard = async () => {
             await loadGuildDetails();
         }
     } catch (error) {
-        setBanner(elements.banner, 'Please log in to access the dashboard.');
+        dashboardApi.setBanner(elements.banner, 'Please log in to access the dashboard.');
         window.location.href = '/';
         return;
     }
