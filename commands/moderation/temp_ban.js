@@ -3,6 +3,7 @@ const { connectToDatabase } = require('../../db.js');
 
 module.exports = {
     mod: true,
+    permissionGroup: 'moderation',
     data: new SlashCommandBuilder()
         .setName("temp-ban")
         .setDescription("Temporarily ban a member.")

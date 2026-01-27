@@ -1,4 +1,5 @@
 const { Events, MessageFlags } = require('discord.js');
+const { isCommandAllowed } = require('../services/permissions');
 
 module.exports = {
     name: Events.InteractionCreate,
@@ -13,6 +14,24 @@ module.exports = {
         }
 
         try {
+            if (command.permissionGroup) {
+                const allowed = await isCommandAllowed({
+                    guildId: interaction.guildId,
+                    userId: interaction.user.id,
+                    member: interaction.member,
+                    commandName: interaction.commandName,
+                    permissionGroup: command.permissionGroup,
+                });
+
+                if (!allowed) {
+                    await interaction.reply({
+                        content: 'You do not have permission to use this command.',
+                        flags: MessageFlags.Ephemeral,
+                    });
+                    return;
+                }
+            }
+
             await command.execute(interaction);
         } catch (error) {
             console.error(error);

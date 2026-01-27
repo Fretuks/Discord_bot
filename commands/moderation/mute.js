@@ -1,6 +1,7 @@
 const { SlashCommandBuilder, PermissionFlagsBits } = require("discord.js");
 
 module.exports = {
+    permissionGroup: 'moderation',
     data: new SlashCommandBuilder()
         .setName("mute")
         .setDescription("Temporarily mute a member with a timeout.")
