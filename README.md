@@ -70,3 +70,23 @@ Im going to make a To-do List for the features i want to implement for my Bot.
 2. **Monitoring**
    - [ ] Add logging to track errors and usage statistics.
    - [ ] Implement uptime monitoring to ensure the bot stays online.
+
+---
+
+### **Server-Specific Permission Configuration**
+Moderation commands support per-server permission overrides stored in MongoDB. Each guild can define which users or roles are allowed to run specific commands, plus optional admin overrides that apply to all moderation commands. This is intended for future web-based configuration.
+
+Example document stored in the `discord.guild_permissions` collection:
+```json
+{
+  "guildId": "1234567890",
+  "adminUserIds": ["1111111111"],
+  "adminRoleIds": ["2222222222"],
+  "commandPermissions": {
+    "kick": {
+      "allowedUserIds": ["3333333333"],
+      "allowedRoleIds": ["4444444444"]
+    }
+  }
+}
+```
