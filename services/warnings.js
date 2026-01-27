@@ -1,4 +1,5 @@
 const { connectToDatabase } = require('../db');
+const { updateStrikes } = require('./moderationRecords');
 
 const WARNING_COLLECTION = 'warnings';
 
@@ -25,8 +26,11 @@ const addWarning = async ({ guildId, userId, moderatorId, reason }) => {
     );
 
     const warnings = result.value?.warnings ?? [];
+    const strikeCount = warnings.length;
 
-    return { warnings, warningEntry };
+    await updateStrikes({ guildId, userId, strikes: strikeCount });
+
+    return { warnings, warningEntry, strikeCount };
 };
 
 const getWarnings = async ({ guildId, userId }) => {

@@ -40,7 +40,7 @@ const isCommandAllowed = async ({
         permissions.adminUserIds.includes(userId) ||
         (member && memberHasRole(member, permissions.adminRoleIds));
 
-    if (permissionGroup && isAdmin) {
+    if (isAdmin) {
         return true;
     }
 
