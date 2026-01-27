@@ -1,11 +1,27 @@
+const fs = require('node:fs');
+const path = require('node:path');
 const {MongoClient, ServerApiVersion} = require('mongodb');
-const {mongodb} = require("./config.json");
+
+const loadConfig = () => {
+    const configPath = path.join(__dirname, 'config.json');
+    if (fs.existsSync(configPath)) {
+        return require(configPath);
+    }
+    return {};
+};
+
+const config = loadConfig();
+const MONGODB_URI = process.env.MONGODB_URI || config.mongodb;
 
 let dbClient;
 
 async function connectToDatabase() {
     if (!dbClient) {
-        dbClient = new MongoClient(mongodb, {
+        if (!MONGODB_URI) {
+            throw new Error('Missing MongoDB connection string.');
+        }
+
+        dbClient = new MongoClient(MONGODB_URI, {
             serverApi: {
                 version: ServerApiVersion.v1,
                 strict: true,

@@ -2,9 +2,18 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const axios = require('axios');
+const cookieParser = require('cookie-parser');
+const cors = require('cors');
 const express = require('express');
+const session = require('express-session');
+const MongoStore = require('connect-mongo');
+const rateLimit = require('express-rate-limit');
 const {addWarning, getWarnings} = require('./services/warnings');
-const {getGuildPermissions, updateGuildPermissions} = require('./services/permissions');
+const {
+    getGuildPermissions,
+    updateGuildPermissions,
+    sanitizePermissionPayload,
+} = require('./services/permissions');
 const DEFAULT_SESSION_TTL_MS = 24 * 60 * 60 * 1000;
 const PERMISSION_BITS = {
     ADMINISTRATOR: 0x8n,
@@ -38,6 +47,8 @@ const DISCORD_BOT_TOKEN =
     process.env.DISCORD_BOT_TOKEN ||
     config.discordBotToken ||
     config.token;
+const MONGODB_URI = process.env.MONGODB_URI || config.mongodb;
+const SESSION_SECRET = process.env.SESSION_SECRET || config.sessionSecret;
 const DASHBOARD_CLIENT_URL =
     process.env.DASHBOARD_CLIENT_URL ||
     config.dashboardClientUrl ||
@@ -56,77 +67,14 @@ console.log('[oauth config]', {
 });
 
 const DISCORD_API_BASE = 'https://discord.com/api';
+const DISCORD_OAUTH_BASE = 'https://discord.com/oauth2';
 
-const sessionStore = new Map();
-
-const parseCookies = (headerValue) => {
-    const cookies = {};
-    if (!headerValue) {
-        return cookies;
-    }
-
-    headerValue.split(';').forEach((cookie) => {
-        const [rawName, ...rest] = cookie.trim().split('=');
-        if (!rawName) {
-            return;
-        }
-        cookies[rawName] = decodeURIComponent(rest.join('='));
-    });
-
-    return cookies;
+const logInfo = (message, meta = {}) => {
+    console.log(JSON.stringify({level: 'info', message, ...meta}));
 };
 
-const setCookie = (res, name, value, options = {}) => {
-    const directives = [`${name}=${encodeURIComponent(value)}`];
-    if (options.maxAge) {
-        directives.push(`Max-Age=${options.maxAge}`);
-    }
-    directives.push(`Path=${options.path || '/'}`);
-    if (options.httpOnly !== false) {
-        directives.push('HttpOnly');
-    }
-    if (options.sameSite) {
-        directives.push(`SameSite=${options.sameSite}`);
-    }
-    if (options.secure) {
-        directives.push('Secure');
-    }
-
-    res.append('Set-Cookie', directives.join('; '));
-};
-
-const clearCookie = (res, name) => {
-    setCookie(res, name, '', {maxAge: 0});
-};
-
-const createSession = (payload) => {
-    const sessionId = crypto.randomBytes(32).toString('hex');
-    const expiresAt = Date.now() + (Number.isNaN(SESSION_TTL_MS) ? DEFAULT_SESSION_TTL_MS : SESSION_TTL_MS);
-
-    sessionStore.set(sessionId, {
-        ...payload,
-        expiresAt,
-    });
-
-    return {sessionId, expiresAt};
-};
-
-const getSession = (sessionId) => {
-    const session = sessionStore.get(sessionId);
-    if (!session) {
-        return null;
-    }
-
-    if (session.expiresAt <= Date.now()) {
-        sessionStore.delete(sessionId);
-        return null;
-    }
-
-    return session;
-};
-
-const destroySession = (sessionId) => {
-    sessionStore.delete(sessionId);
+const logError = (message, meta = {}) => {
+    console.error(JSON.stringify({level: 'error', message, ...meta}));
 };
 
 const ensureOAuthConfig = () => {
@@ -151,7 +99,7 @@ const buildAuthorizationUrl = (state) => {
         prompt: 'consent',
     });
 
-    return `${DISCORD_API_BASE}/oauth2/authorize?${params.toString()}`;
+    return `${DISCORD_OAUTH_BASE}/authorize?${params.toString()}`;
 };
 
 const fetchDiscordAccessToken = async (code) => {
@@ -227,19 +175,10 @@ const canManageGuild = (guild) => {
 };
 
 const ensureSession = (req, res, next) => {
-    const cookies = parseCookies(req.headers.cookie);
-    const sessionId = cookies.dashboard_session;
-    if (!sessionId) {
+    if (!req.session?.user || !req.session?.accessToken) {
         return res.status(401).json({error: 'Unauthorized'});
     }
 
-    const session = getSession(sessionId);
-    if (!session) {
-        return res.status(401).json({error: 'Unauthorized'});
-    }
-
-    req.session = session;
-    req.sessionId = sessionId;
     return next();
 };
 
@@ -257,40 +196,138 @@ const ensureManageableGuild = async (req, res, next) => {
         req.guild = guild;
         return next();
     } catch (error) {
+        logError('Failed to fetch guilds for permission check', {
+            message: error.message,
+            status: error.response?.status,
+        });
         return res.status(502).json({error: 'Failed to fetch guilds'});
     }
 };
 
+const buildCorsOrigins = () => {
+    if (!DASHBOARD_CLIENT_URL) {
+        return true;
+    }
+    const entries = DASHBOARD_CLIENT_URL.split(',').map((value) => value.trim()).filter(Boolean);
+    return entries.length ? entries : true;
+};
+
+const buildSessionStore = () => {
+    if (!MONGODB_URI) {
+        return null;
+    }
+    return MongoStore.create({
+        mongoUrl: MONGODB_URI,
+        collectionName: 'dashboard_sessions',
+        ttl: Math.floor(
+            (Number.isNaN(SESSION_TTL_MS) ? DEFAULT_SESSION_TTL_MS : SESSION_TTL_MS) / 1000,
+        ),
+    });
+};
+
+const validatePermissionPayload = (payload = {}) => {
+    const errors = [];
+    if (payload.adminRoleIds && !Array.isArray(payload.adminRoleIds)) {
+        errors.push('adminRoleIds must be an array of role IDs');
+    }
+    if (payload.adminUserIds && !Array.isArray(payload.adminUserIds)) {
+        errors.push('adminUserIds must be an array of user IDs');
+    }
+    if (payload.commandPermissions && typeof payload.commandPermissions !== 'object') {
+        errors.push('commandPermissions must be an object');
+    }
+
+    return errors;
+};
+
+const validateWarningReason = (reason) => {
+    if (typeof reason !== 'string') {
+        return 'Reason must be a string';
+    }
+    const trimmed = reason.trim();
+    if (!trimmed) {
+        return 'Reason is required';
+    }
+    if (trimmed.length > 500) {
+        return 'Reason must be 500 characters or fewer';
+    }
+    return null;
+};
+
 const createDashboardApp = () => {
     const app = express();
+    const isProduction = process.env.NODE_ENV === 'production';
 
+    app.set('trust proxy', 1);
+
+    app.use(
+        cors({
+            origin: buildCorsOrigins(),
+            credentials: true,
+        }),
+    );
     app.use(express.json());
+    app.use(cookieParser());
     app.use(express.static(path.join(__dirname, 'public')));
 
-    app.get('/auth/discord', (req, res) => {
+    if (!SESSION_SECRET) {
+        logError('Missing SESSION_SECRET configuration');
+    }
+
+    const sessionStore = buildSessionStore();
+    if (!sessionStore) {
+        logError('Missing MONGODB_URI configuration for session store');
+    }
+
+    app.use(
+        session({
+            secret: SESSION_SECRET || crypto.randomBytes(32).toString('hex'),
+            resave: false,
+            saveUninitialized: false,
+            cookie: {
+                httpOnly: true,
+                sameSite: 'lax',
+                secure: isProduction,
+                maxAge: Number.isNaN(SESSION_TTL_MS) ? DEFAULT_SESSION_TTL_MS : SESSION_TTL_MS,
+            },
+            store: sessionStore || undefined,
+        }),
+    );
+
+    const authLimiter = rateLimit({
+        windowMs: 60 * 1000,
+        max: 30,
+        standardHeaders: true,
+        legacyHeaders: false,
+    });
+
+    app.get('/health', (req, res) => {
+        return res.json({status: 'ok'});
+    });
+
+    app.get('/auth/discord', authLimiter, (req, res) => {
         if (!ensureOAuthConfig()) {
             return res.status(500).json({error: 'Missing Discord OAuth configuration'});
         }
 
         const state = crypto.randomBytes(16).toString('hex');
-        setCookie(res, 'oauth_state', state, {
+        res.cookie('oauth_state', state, {
             httpOnly: true,
-            sameSite: 'Lax',
-            secure: req.secure,
-            maxAge: 300,
+            sameSite: 'lax',
+            secure: isProduction,
+            maxAge: 300 * 1000,
         });
 
         return res.redirect(buildAuthorizationUrl(state));
     });
 
-    app.get('/auth/discord/callback', async (req, res) => {
+    app.get('/auth/discord/callback', authLimiter, async (req, res) => {
         if (!ensureOAuthConfig()) {
             return res.status(500).json({error: 'Missing Discord OAuth configuration'});
         }
 
         const {code, state} = req.query;
-        const cookies = parseCookies(req.headers.cookie);
-        if (!code || !state || cookies.oauth_state !== state) {
+        if (!code || !state || req.cookies.oauth_state !== state) {
             return res.status(400).json({error: 'Invalid OAuth state'});
         }
 
@@ -298,21 +335,15 @@ const createDashboardApp = () => {
             const tokenData = await fetchDiscordAccessToken(code);
             const user = await fetchDiscordUser(tokenData.access_token);
 
-            const {sessionId, expiresAt} = createSession({
-                accessToken: tokenData.access_token,
-                refreshToken: tokenData.refresh_token,
-                tokenType: tokenData.token_type,
-                scope: tokenData.scope,
-                user,
-            });
+            const expiresAt = Date.now() + (tokenData.expires_in || 0) * 1000;
+            req.session.accessToken = tokenData.access_token;
+            req.session.refreshToken = tokenData.refresh_token;
+            req.session.tokenType = tokenData.token_type;
+            req.session.scope = tokenData.scope;
+            req.session.expiresAt = expiresAt;
+            req.session.user = user;
 
-            setCookie(res, 'dashboard_session', sessionId, {
-                httpOnly: true,
-                sameSite: 'Lax',
-                secure: req.secure,
-                maxAge: Math.floor((expiresAt - Date.now()) / 1000),
-            });
-            clearCookie(res, 'oauth_state');
+            res.clearCookie('oauth_state');
 
             if (DASHBOARD_CLIENT_URL) {
                 return res.redirect(DASHBOARD_CLIENT_URL);
@@ -324,7 +355,7 @@ const createDashboardApp = () => {
 
             return res.status(200).json({user});
         } catch (error) {
-            console.error('Discord OAuth failed', {
+            logError('Discord OAuth failed', {
                 message: error.message,
                 status: error.response?.status,
                 data: error.response?.data,
@@ -338,9 +369,18 @@ const createDashboardApp = () => {
     });
 
     app.post('/auth/logout', ensureSession, (req, res) => {
-        destroySession(req.sessionId);
-        clearCookie(res, 'dashboard_session');
-        return res.status(204).send();
+        req.session.destroy((err) => {
+            if (err) {
+                logError('Failed to destroy session', {message: err.message});
+                return res.status(500).json({error: 'Failed to log out'});
+            }
+            res.clearCookie('connect.sid');
+            return res.status(204).send();
+        });
+    });
+
+    app.get('/api/me', ensureSession, (req, res) => {
+        return res.json({user: req.session.user});
     });
 
     app.get('/api/guilds', ensureSession, async (req, res) => {
@@ -349,6 +389,10 @@ const createDashboardApp = () => {
             const manageableGuilds = guilds.filter(canManageGuild);
             return res.json({guilds: manageableGuilds});
         } catch (error) {
+            logError('Failed to fetch guilds', {
+                message: error.message,
+                status: error.response?.status,
+            });
             return res.status(502).json({error: 'Failed to fetch guilds'});
         }
     });
@@ -362,6 +406,7 @@ const createDashboardApp = () => {
                 const permissions = await getGuildPermissions(req.params.guildId);
                 return res.json({permissions});
             } catch (error) {
+                logError('Failed to fetch permissions', {message: error.message});
                 return res.status(500).json({error: 'Failed to fetch permissions'});
             }
         },
@@ -372,13 +417,19 @@ const createDashboardApp = () => {
         ensureSession,
         ensureManageableGuild,
         async (req, res) => {
+            const validationErrors = validatePermissionPayload(req.body || {});
+            if (validationErrors.length) {
+                return res.status(400).json({error: 'Invalid permissions payload', details: validationErrors});
+            }
             try {
+                const sanitizedPermissions = sanitizePermissionPayload(req.body || {});
                 const permissions = await updateGuildPermissions({
                     guildId: req.params.guildId,
-                    permissions: req.body || {},
+                    permissions: sanitizedPermissions,
                 });
                 return res.json({permissions});
             } catch (error) {
+                logError('Failed to update permissions', {message: error.message});
                 return res.status(500).json({error: 'Failed to update permissions'});
             }
         },
@@ -393,6 +444,10 @@ const createDashboardApp = () => {
                 const roles = await fetchDiscordGuildRoles(req.params.guildId);
                 return res.json({roles});
             } catch (error) {
+                logError('Failed to fetch roles', {
+                    message: error.message,
+                    status: error.response?.status,
+                });
                 return res.status(500).json({error: 'Failed to fetch roles'});
             }
         },
@@ -410,6 +465,7 @@ const createDashboardApp = () => {
                 });
                 return res.json({warnings});
             } catch (error) {
+                logError('Failed to fetch warnings', {message: error.message});
                 return res.status(500).json({error: 'Failed to fetch warnings'});
             }
         },
@@ -421,18 +477,20 @@ const createDashboardApp = () => {
         ensureManageableGuild,
         async (req, res) => {
             const {reason} = req.body || {};
-            if (!reason) {
-                return res.status(400).json({error: 'Reason is required'});
+            const reasonError = validateWarningReason(reason);
+            if (reasonError) {
+                return res.status(400).json({error: reasonError});
             }
             try {
                 const result = await addWarning({
                     guildId: req.params.guildId,
                     userId: req.params.userId,
                     moderatorId: req.session.user?.id,
-                    reason,
+                    reason: reason.trim(),
                 });
                 return res.status(201).json(result);
             } catch (error) {
+                logError('Failed to add warning', {message: error.message});
                 return res.status(500).json({error: 'Failed to add warning'});
             }
         },
