@@ -1,65 +1,80 @@
-# Discord Bot
+Im going to make a To-do List for the features i want to implement for my Bot.
 
-## Dashboard setup
+### **To-Do List for My Discord Bot**
 
-This repository includes a lightweight dashboard for configuring permissions and warnings without editing JSON. The dashboard uses Discord OAuth2 and the existing MongoDB collections.
+#### **Core Features**
+(I will try to make these tools optional, because alot of bots already feature them)
 
-### Environment variables
+1. **Basic Commands**
+   - [x] Add a `/help` command to display a list of available commands.
+   - [x] Implement a `/ping` command to check bot responsiveness.
+   - [x] Add an `/about` command to describe the bot's purpose.
 
-Copy `.env.example` and fill in the values:
+2. **Role Management**
+   - [ ] Set up a self-assignable role system (e.g., using reaction roles).
+   - [x] Allow admins to assign/remove roles with commands.
 
-```bash
-cp .env.example .env
-```
-
-Required backend variables:
-
-- `DISCORD_CLIENT_ID`
-- `DISCORD_CLIENT_SECRET`
-- `DISCORD_REDIRECT_URI` (example: `http://localhost:3000/auth/discord/callback`)
-- `DISCORD_BOT_TOKEN`
-- `MONGODB_URI`
-- `SESSION_SECRET`
-- `DASHBOARD_CLIENT_URL` (example: `http://localhost:5173`)
-
-Frontend variables (Vite):
-
-- `VITE_API_BASE_URL` (example: `http://localhost:3000`)
-- `VITE_BOT_INVITE_URL`
-
-> Make sure the redirect URI is added in the Discord Developer Portal OAuth2 settings.
-
-### Running the backend
-
-```bash
-node dashboardServer.js
-```
-
-The API will run on `DASHBOARD_PORT` (default `3000`).
-
-### Running the dashboard frontend
-
-```bash
-cd dashboard
-npm install
-npm run dev
-```
-
-The frontend will run on `http://localhost:5173` by default.
-
-### API health check
-
-```bash
-curl http://localhost:3000/health
-```
+3. **Moderation Tools**
+   - [x] Add commands to mute, kick, and temp_ban users.
+   - [ ] Create an auto-moderation feature to delete spam or inappropriate content.
+   - [x] Implement a warning system with a strike counter.
 
 ---
 
-## Existing feature notes
+#### **Unique Features**
+1. **Currency System**
+   - [x] Design a virtual currency system with basic commands:
+     - [x] `/balance` to check currency balance.
+     - [x] `/earn` to earn daily or periodic rewards.
+     - [x] `/transfer @user [amount]` to send currency to another user.
+   - [ ] Link the currency system to role management:
+     - [ ] Allow users to purchase roles using the currency with a command (e.g., `!buyrole [role name]`).
 
-### Server-Specific Permission Configuration
+2. **Datetime Converter**
+   (Still in Progress, maybe i'll add visual Menu)
+   - [x] Create a command to convert timezones:
+     - [x] `/timestamp [date]` to generate Discord timestamps.
+     - [x] Support multiple Discord timestamp formats.
+   - [ ] Include a command to display server-specific or user-specific timezones.
 
-Moderation commands support per-server permission overrides stored in MongoDB. Each guild can define which users or roles are allowed to run specific commands, plus optional admin overrides that apply to all moderation commands.
+3. **Minigames**
+   - [ ] Implement a Quiz Game:
+     - [x] Add a `/quiz` command to start the game.
+     - [x] Provide multiple-choice or true/false questions.
+     - [x] Award virtual currency for correct answers.
+   - [ ] Add a simple number-guessing game (e.g., `!guess [number]`).
+   - [ ] Create a leaderboard for game winners.
+
+---
+
+#### **Utility Tools**
+1. **Search and Lookups**
+   - [x] Add a `/wiki [topic]` command to fetch summaries from Wikipedia.
+   - [x] Include a `/weather [location]` command for weather updates.
+
+---
+
+#### **Advanced and Fun Features (very optional)**
+1. **AI Chat Integration**
+   - [ ] Integrate GPT for conversational AI:
+     - [ ] Respond to mentions with intelligent replies.
+     - [ ] Allow users to ask general questions with `!ask [question]`.
+
+---
+
+#### **Deployment (will happen if im completly satisfied with the bot)**
+1. **Hosting**
+   - [ ] Set up local hosting for development.
+   - [ ] Deploy the bot on a cloud platform (e.g., Heroku, AWS, or Railway).
+
+2. **Monitoring**
+   - [ ] Add logging to track errors and usage statistics.
+   - [ ] Implement uptime monitoring to ensure the bot stays online.
+
+---
+
+### **Server-Specific Permission Configuration**
+Moderation commands support per-server permission overrides stored in MongoDB. Each guild can define which users or roles are allowed to run specific commands, plus optional admin overrides that apply to all moderation commands. This is intended for future web-based configuration.
 
 Example document stored in the `discord.guild_permissions` collection:
 ```json
