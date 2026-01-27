@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>Discord Bot Dashboard</title>
+        <link rel="stylesheet" href="styles.css" />
+    </head>
+    <body>
+        <div class="app">
+            <header class="topbar">
+                <div class="topbar__user">
+                    <span class="badge">Guild dashboard</span>
+                    <strong id="userDisplay">Loading session...</strong>
+                    <span class="muted" id="sessionExpiry"></span>
+                </div>
+                <div class="button-row">
+                    <a class="button" href="/">Home</a>
+                    <button class="button button--ghost" id="logoutButton">Log out</button>
+                </div>
+            </header>
+
+            <div class="banner" id="banner"></div>
+
+            <div class="layout">
+                <aside class="panel">
+                    <div class="section">
+                        <div class="section__header">
+                            <h2>Manageable guilds</h2>
+                        </div>
+                        <div class="guild-list" id="guildList"></div>
+                        <div class="empty-state" id="guildEmpty" hidden>
+                            No manageable guilds found. Make sure you have Manage Server permissions.
+                        </div>
+                    </div>
+                </aside>
+
+                <main>
+                    <div class="tabs">
+                        <button class="tab active" data-tab="permissions">Permissions</button>
+                        <button class="tab" data-tab="warnings">Warnings</button>
+                    </div>
+
+                    <section class="panel" id="permissionsPanel">
+                        <div class="section">
+                            <div class="section__header">
+                                <div>
+                                    <h2>Admin access</h2>
+                                    <p class="muted">Choose who can edit the bot configuration.</p>
+                                </div>
+                            </div>
+                            <label class="field">
+                                <span>Admin roles</span>
+                                <select class="multi-select" id="adminRolesSelect" multiple></select>
+                            </label>
+                            <label class="field">
+                                <span>Add admin user ID</span>
+                                <div class="button-row">
+                                    <input type="text" id="adminUserInput" placeholder="123456789" />
+                                    <button class="button" id="addAdminUserButton">Add user</button>
+                                </div>
+                            </label>
+                            <div class="chip-list" id="adminUserChips"></div>
+                        </div>
+
+                        <div class="section">
+                            <div class="section__header">
+                                <div>
+                                    <h2>Command permissions</h2>
+                                    <p class="muted">Configure who can run each command. Empty restrictions allow everyone.</p>
+                                </div>
+                                <div class="button-row">
+                                    <input type="text" id="newCommandInput" placeholder="new-command" />
+                                    <button class="button" id="addCommandButton">Add command</button>
+                                </div>
+                            </div>
+                            <table class="table" id="commandsTable">
+                                <thead>
+                                    <tr>
+                                        <th>Command</th>
+                                        <th>Allowed roles</th>
+                                        <th>Allowed users</th>
+                                        <th></th>
+                                    </tr>
+                                </thead>
+                                <tbody></tbody>
+                            </table>
+                        </div>
+
+                        <div class="button-row">
+                            <button class="button button--primary" id="savePermissionsButton">Save permissions</button>
+                            <span class="muted" id="permissionsStatus"></span>
+                        </div>
+                    </section>
+
+                    <section class="panel" id="warningsPanel" hidden>
+                        <div class="section">
+                            <div class="section__header">
+                                <div>
+                                    <h2>Warnings lookup</h2>
+                                    <p class="muted">Fetch recent warnings for a user.</p>
+                                </div>
+                            </div>
+                            <label class="field">
+                                <span>User ID</span>
+                                <div class="button-row">
+                                    <input type="text" id="warningsUserInput" placeholder="123456789" />
+                                    <button class="button" id="fetchWarningsButton">Fetch warnings</button>
+                                </div>
+                            </label>
+                            <div class="empty-state" id="warningsEmpty" hidden>No warnings found.</div>
+                            <ul id="warningsList"></ul>
+                        </div>
+
+                        <div class="section">
+                            <div class="section__header">
+                                <div>
+                                    <h2>Add warning</h2>
+                                    <p class="muted">Record a new warning and sync strikes.</p>
+                                </div>
+                            </div>
+                            <label class="field">
+                                <span>User ID</span>
+                                <input type="text" id="newWarningUserInput" placeholder="123456789" />
+                            </label>
+                            <label class="field">
+                                <span>Reason</span>
+                                <textarea id="warningReasonInput" placeholder="Reason for warning"></textarea>
+                            </label>
+                            <button class="button button--primary" id="addWarningButton">Add warning</button>
+                            <p class="muted" id="warningStatus"></p>
+                        </div>
+                    </section>
+                </main>
+            </div>
+        </div>
+
+        <script src="app.js"></script>
+        <script src="dashboard.js"></script>
+    </body>
+</html>

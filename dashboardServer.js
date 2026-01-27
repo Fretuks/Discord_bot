@@ -56,6 +56,8 @@ console.log('[oauth config]', {
 });
 
 const DISCORD_API_BASE = 'https://discord.com/api';
+const DISCORD_OAUTH_BASE = 'https://discord.com/oauth2';
+const COMMANDS_PATH = path.join(__dirname, 'commands.json');
 
 const sessionStore = new Map();
 
@@ -151,7 +153,7 @@ const buildAuthorizationUrl = (state) => {
         prompt: 'consent',
     });
 
-    return `${DISCORD_API_BASE}/oauth2/authorize?${params.toString()}`;
+    return `${DISCORD_OAUTH_BASE}/authorize?${params.toString()}`;
 };
 
 const fetchDiscordAccessToken = async (code) => {
@@ -163,7 +165,7 @@ const fetchDiscordAccessToken = async (code) => {
         redirect_uri: DISCORD_REDIRECT_URI,
     });
 
-    const response = await axios.post(`${DISCORD_API_BASE}/oauth2/token`, params, {
+    const response = await axios.post(`${DISCORD_API_BASE}/oauth2/token`, params.toString(), {
         headers: {
             'Content-Type': 'application/x-www-form-urlencoded',
         },
@@ -215,6 +217,34 @@ const parsePermissionBits = (permissionValue) => {
         return BigInt(permissionValue);
     } catch (error) {
         return 0n;
+    }
+};
+
+const isHttpsRequest = (req) => {
+    if (req.secure) {
+        return true;
+    }
+
+    const forwardedProto = req.headers['x-forwarded-proto'];
+    if (typeof forwardedProto === 'string' && forwardedProto.split(',')[0].trim() === 'https') {
+        return true;
+    }
+
+    return Boolean(config.cookieSecure);
+};
+
+const loadCommands = () => {
+    if (!fs.existsSync(COMMANDS_PATH)) {
+        return [];
+    }
+
+    try {
+        const raw = fs.readFileSync(COMMANDS_PATH, 'utf-8');
+        const parsed = JSON.parse(raw);
+        return Array.isArray(parsed) ? parsed.filter((entry) => typeof entry === 'string') : [];
+    } catch (error) {
+        console.error('Failed to load commands.json', {message: error.message});
+        return [];
     }
 };
 
@@ -276,7 +306,7 @@ const createDashboardApp = () => {
         setCookie(res, 'oauth_state', state, {
             httpOnly: true,
             sameSite: 'Lax',
-            secure: req.secure,
+            secure: isHttpsRequest(req),
             maxAge: 300,
         });
 
@@ -298,7 +328,7 @@ const createDashboardApp = () => {
             const tokenData = await fetchDiscordAccessToken(code);
             const user = await fetchDiscordUser(tokenData.access_token);
 
-            const {sessionId, expiresAt} = createSession({
+            const session = createSession({
                 accessToken: tokenData.access_token,
                 refreshToken: tokenData.refresh_token,
                 tokenType: tokenData.token_type,
@@ -306,11 +336,11 @@ const createDashboardApp = () => {
                 user,
             });
 
-            setCookie(res, 'dashboard_session', sessionId, {
+            setCookie(res, 'dashboard_session', session.sessionId, {
                 httpOnly: true,
                 sameSite: 'Lax',
-                secure: req.secure,
-                maxAge: Math.floor((expiresAt - Date.now()) / 1000),
+                secure: isHttpsRequest(req),
+                maxAge: Math.floor((session.expiresAt - Date.now()) / 1000),
             });
             clearCookie(res, 'oauth_state');
 
@@ -319,7 +349,7 @@ const createDashboardApp = () => {
             }
 
             if (req.accepts('html')) {
-                return res.redirect('/');
+                return res.redirect('/dashboard.html');
             }
 
             return res.status(200).json({user});
@@ -327,12 +357,12 @@ const createDashboardApp = () => {
             console.error('Discord OAuth failed', {
                 message: error.message,
                 status: error.response?.status,
-                data: error.response?.data,
+                data: error.response?.data?.error || error.response?.data?.error_description,
             });
 
             return res.status(502).json({
                 error: 'Failed to authenticate with Discord',
-                details: error.response?.data || error.message,
+                details: error.response?.data?.error_description || error.message,
             });
         }
     });
@@ -341,6 +371,13 @@ const createDashboardApp = () => {
         destroySession(req.sessionId);
         clearCookie(res, 'dashboard_session');
         return res.status(204).send();
+    });
+
+    app.get('/api/me', ensureSession, (req, res) => {
+        return res.json({
+            user: req.session.user,
+            expiresAt: req.session.expiresAt,
+        });
     });
 
     app.get('/api/guilds', ensureSession, async (req, res) => {
@@ -399,6 +436,16 @@ const createDashboardApp = () => {
     );
 
     app.get(
+        '/api/guilds/:guildId/commands',
+        ensureSession,
+        ensureManageableGuild,
+        (req, res) => {
+            const commands = loadCommands();
+            return res.json({commands});
+        },
+    );
+
+    app.get(
         '/api/guilds/:guildId/warnings/:userId',
         ensureSession,
         ensureManageableGuild,
@@ -408,7 +455,11 @@ const createDashboardApp = () => {
                     guildId: req.params.guildId,
                     userId: req.params.userId,
                 });
-                return res.json({warnings});
+                const normalizedWarnings = warnings.map((warning) => ({
+                    ...warning,
+                    createdAt: warning.createdAt ? new Date(warning.createdAt).toISOString() : null,
+                }));
+                return res.json({warnings: normalizedWarnings});
             } catch (error) {
                 return res.status(500).json({error: 'Failed to fetch warnings'});
             }
@@ -431,7 +482,23 @@ const createDashboardApp = () => {
                     moderatorId: req.session.user?.id,
                     reason,
                 });
-                return res.status(201).json(result);
+                const warnings = (result.warnings || []).map((warning) => ({
+                    ...warning,
+                    createdAt: warning.createdAt ? new Date(warning.createdAt).toISOString() : null,
+                }));
+                const warningEntry = result.warningEntry
+                    ? {
+                          ...result.warningEntry,
+                          createdAt: result.warningEntry.createdAt
+                              ? new Date(result.warningEntry.createdAt).toISOString()
+                              : null,
+                      }
+                    : null;
+                return res.status(201).json({
+                    ...result,
+                    warnings,
+                    warningEntry,
+                });
             } catch (error) {
                 return res.status(500).json({error: 'Failed to add warning'});
             }
