@@ -7,9 +7,18 @@ module.exports = {
         const dbClient = await connectToDatabase();
         const db = dbClient.db('discord');
         const tempBanCollection = db.collection('tempban');
+        const scheduledBanIds = new Set();
+        let pollingInterval = null;
 
         // 2) Define a function to schedule unbans
         async function scheduleUnban(banData) {
+            const banId = banData?._id?.toString();
+            if (banId && scheduledBanIds.has(banId)) {
+                return;
+            }
+            if (banId) {
+                scheduledBanIds.add(banId);
+            }
             const delay = banData.banTime - Date.now();
 
             if (delay <= 0) {
@@ -23,22 +32,54 @@ module.exports = {
                     await tempBanCollection.deleteOne({ _id: banData._id });
                 } catch (err) {
                     console.error('Error unbanning member:', err);
+                } finally {
+                    if (banId) {
+                        scheduledBanIds.delete(banId);
+                    }
                 }
             }, delay);
         }
 
-        try {
+        async function loadAndScheduleBans() {
             const allBans = await tempBanCollection.find({}).toArray();
             allBans.forEach(scheduleUnban);
+        }
 
-            tempBanCollection.watch().on('change', (change) => {
+        function startPollingFallback() {
+            if (pollingInterval) {
+                return;
+            }
+            console.warn('Change streams unavailable; falling back to polling for temp bans.');
+            pollingInterval = setInterval(() => {
+                loadAndScheduleBans().catch((err) => {
+                    console.error('Error polling temp bans:', err);
+                });
+            }, 60_000);
+        }
+
+        try {
+            await loadAndScheduleBans();
+
+            const changeStream = tempBanCollection.watch();
+            changeStream.on('change', (change) => {
                 if (change.operationType === 'insert') {
                     const newBan = change.fullDocument;
                     scheduleUnban(newBan);
                 }
             });
+            changeStream.on('error', (err) => {
+                if (err?.code === 40573) {
+                    startPollingFallback();
+                } else {
+                    console.error('Change stream error:', err);
+                }
+            });
         } catch (err) {
-            console.error('Error setting up unban system:', err);
+            if (err?.code === 40573) {
+                startPollingFallback();
+            } else {
+                console.error('Error setting up unban system:', err);
+            }
         }
     },
 };
