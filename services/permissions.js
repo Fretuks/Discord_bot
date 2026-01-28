@@ -40,12 +40,16 @@ const sanitizeCommandPermissions = (commandPermissions = {}) => {
     return sanitized;
 };
 
-const normalizePermissionConfig = (config = {}) => ({
-    ...DEFAULT_GUILD_PERMISSIONS,
-    adminRoleIds: normalizeIdArray(config.adminRoleIds),
-    adminUserIds: normalizeIdArray(config.adminUserIds),
-    commandPermissions: sanitizeCommandPermissions(config.commandPermissions),
-});
+const normalizePermissionConfig = (config = {}) => {
+    const safeConfig = config && typeof config === 'object' ? config : {};
+
+    return {
+        ...DEFAULT_GUILD_PERMISSIONS,
+        adminRoleIds: normalizeIdArray(safeConfig.adminRoleIds),
+        adminUserIds: normalizeIdArray(safeConfig.adminUserIds),
+        commandPermissions: sanitizeCommandPermissions(safeConfig.commandPermissions),
+    };
+};
 
 const memberHasRole = (member, roleIds) =>
     roleIds.some((roleId) => member.roles?.cache?.has(roleId));
