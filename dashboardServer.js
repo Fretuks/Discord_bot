@@ -58,6 +58,8 @@ console.log('[oauth config]', {
 const DISCORD_API_BASE = 'https://discord.com/api';
 const DISCORD_OAUTH_BASE = 'https://discord.com/oauth2';
 const COMMANDS_PATH = path.join(__dirname, 'commands.json');
+const GUILD_CACHE_TTL_MS = 5 * 60 * 1000;
+const BOT_TOKEN_ERROR_MESSAGE = 'Missing Discord bot token.';
 
 const sessionStore = new Map();
 
@@ -212,7 +214,7 @@ const fetchDiscordUserGuilds = async (accessToken) => {
 
 const fetchDiscordGuildRoles = async (guildId) => {
     if (!DISCORD_BOT_TOKEN) {
-        throw new Error('Missing Discord bot token.');
+        throw new Error(BOT_TOKEN_ERROR_MESSAGE);
     }
 
     const response = await axios.get(`${DISCORD_API_BASE}/guilds/${guildId}/roles`, {
@@ -222,6 +224,27 @@ const fetchDiscordGuildRoles = async (guildId) => {
     });
 
     return response.data;
+};
+
+const cacheSessionGuilds = (session, guilds) => {
+    session.guilds = guilds;
+    session.guildsFetchedAt = Date.now();
+};
+
+const getCachedGuilds = (session) => {
+    if (!Array.isArray(session.guilds)) {
+        return null;
+    }
+
+    if (!session.guildsFetchedAt) {
+        return null;
+    }
+
+    if (Date.now() - session.guildsFetchedAt > GUILD_CACHE_TTL_MS) {
+        return null;
+    }
+
+    return session.guilds;
 };
 
 const parsePermissionBits = (permissionValue) => {
@@ -291,7 +314,11 @@ const ensureSession = (req, res, next) => {
 
 const ensureManageableGuild = async (req, res, next) => {
     try {
-        const guilds = await fetchDiscordUserGuilds(req.session.accessToken);
+        let guilds = getCachedGuilds(req.session);
+        if (!guilds) {
+            guilds = await fetchDiscordUserGuilds(req.session.accessToken);
+            cacheSessionGuilds(req.session, guilds);
+        }
         const guild = guilds.find((entry) => entry.id === req.params.guildId);
         if (!guild) {
             return res.status(404).json({error: 'Guild not found'});
@@ -399,6 +426,7 @@ const createDashboardApp = () => {
     app.get('/api/guilds', ensureSession, async (req, res) => {
         try {
             const guilds = await fetchDiscordUserGuilds(req.session.accessToken);
+            cacheSessionGuilds(req.session, guilds);
             const manageableGuilds = guilds.filter(canManageGuild);
             return res.json({guilds: manageableGuilds});
         } catch (error) {
@@ -415,7 +443,11 @@ const createDashboardApp = () => {
                 const permissions = await getGuildPermissions(req.params.guildId);
                 return res.json({permissions});
             } catch (error) {
-                return res.status(500).json({error: 'Failed to fetch permissions'});
+                console.error('Failed to fetch guild permissions', {
+                    guildId: req.params.guildId,
+                    message: error.message,
+                });
+                return res.status(503).json({error: 'Permissions store unavailable'});
             }
         },
     );
@@ -432,7 +464,11 @@ const createDashboardApp = () => {
                 });
                 return res.json({permissions});
             } catch (error) {
-                return res.status(500).json({error: 'Failed to update permissions'});
+                console.error('Failed to update guild permissions', {
+                    guildId: req.params.guildId,
+                    message: error.message,
+                });
+                return res.status(503).json({error: 'Permissions store unavailable'});
             }
         },
     );
@@ -446,7 +482,10 @@ const createDashboardApp = () => {
                 const roles = await fetchDiscordGuildRoles(req.params.guildId);
                 return res.json({roles});
             } catch (error) {
-                return res.status(500).json({error: 'Failed to fetch roles'});
+                if (error.message === BOT_TOKEN_ERROR_MESSAGE) {
+                    return res.status(503).json({error: 'Discord bot token not configured'});
+                }
+                return sendDiscordApiError(res, error, 'Failed to fetch roles');
             }
         },
     );
