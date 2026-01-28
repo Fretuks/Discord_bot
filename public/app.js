@@ -1,3 +1,19 @@
+const createFetchError = async (response) => {
+    let payload = {};
+    try {
+        payload = await response.json();
+    } catch (error) {
+        payload = {};
+    }
+    const message = payload.message || payload.error || `Request failed with status ${response.status}`;
+    const error = new Error(message);
+    error.status = response.status;
+    error.code = payload.error;
+    error.details = payload.details;
+    error.payload = payload;
+    return error;
+};
+
 const fetchJson = async (url, options = {}) => {
     const response = await fetch(url, {
         credentials: 'include',
@@ -9,39 +25,76 @@ const fetchJson = async (url, options = {}) => {
     });
 
     if (!response.ok) {
-        const body = await response.json().catch(() => ({}));
-        const message = body.error || `Request failed with status ${response.status}`;
-        const error = new Error(message);
-        error.details = body.details;
-        throw error;
+        throw await createFetchError(response);
     }
 
     return response.json().catch(() => ({}));
 };
 
-const setBanner = (bannerEl, message, type = 'error') => {
-    if (!bannerEl) {
+const showToast = (message, type = 'success') => {
+    const container = document.getElementById('toastContainer');
+    if (!container) {
         return;
     }
-    bannerEl.textContent = message;
-    bannerEl.classList.remove('banner--error', 'banner--success');
-    bannerEl.classList.add(type === 'success' ? 'banner--success' : 'banner--error');
-    bannerEl.style.display = 'block';
+    const toast = document.createElement('div');
+    toast.className = `toast toast--${type}`;
+    toast.textContent = message;
+    container.appendChild(toast);
+    setTimeout(() => {
+        toast.classList.add('toast--visible');
+    }, 10);
+    setTimeout(() => {
+        toast.classList.remove('toast--visible');
+        setTimeout(() => toast.remove(), 200);
+    }, 3200);
 };
 
-const clearBanner = (bannerEl) => {
+const setErrorBanner = (bannerEl, message, details) => {
     if (!bannerEl) {
         return;
     }
-    bannerEl.textContent = '';
-    bannerEl.style.display = 'none';
+    const messageEl = bannerEl.querySelector('[data-role="error-message"]');
+    const copyButton = bannerEl.querySelector('[data-role="error-copy"]');
+    if (messageEl) {
+        messageEl.textContent = message;
+    }
+    if (copyButton) {
+        copyButton.onclick = async () => {
+            const payload = details || {message};
+            try {
+                await navigator.clipboard.writeText(JSON.stringify(payload, null, 2));
+                showToast('Error details copied.', 'success');
+            } catch (error) {
+                showToast('Unable to copy details.', 'error');
+            }
+        };
+    }
+    bannerEl.hidden = false;
+};
+
+const clearErrorBanner = (bannerEl) => {
+    if (!bannerEl) {
+        return;
+    }
+    bannerEl.hidden = true;
 };
 
 const formatUserDisplay = (user) => {
     if (!user) {
         return 'Not signed in';
     }
-    return `${user.username}#${user.discriminator ?? '0000'}`;
+    const tag = user.discriminator && user.discriminator !== '0' ? `#${user.discriminator}` : '';
+    return `${user.username}${tag}`;
+};
+
+const debounce = (callback, wait = 300) => {
+    let timeoutId;
+    return (...args) => {
+        if (timeoutId) {
+            clearTimeout(timeoutId);
+        }
+        timeoutId = setTimeout(() => callback(...args), wait);
+    };
 };
 
 const initIndexPage = async () => {
@@ -61,13 +114,19 @@ const initIndexPage = async () => {
         loginButton.hidden = true;
         dashboardButton.hidden = false;
         logoutButton.hidden = false;
-        clearBanner(banner);
+        if (banner) {
+            banner.textContent = '';
+            banner.style.display = 'none';
+        }
     } catch (error) {
         sessionStatus.textContent = 'You are not signed in yet.';
         loginButton.hidden = false;
         dashboardButton.hidden = true;
         logoutButton.hidden = true;
-        setBanner(banner, 'Log in with Discord to access the dashboard.', 'error');
+        if (banner) {
+            banner.textContent = 'Log in with Discord to access the dashboard.';
+            banner.style.display = 'block';
+        }
     }
 
     logoutButton?.addEventListener('click', async () => {
@@ -78,7 +137,10 @@ const initIndexPage = async () => {
             dashboardButton.hidden = true;
             logoutButton.hidden = true;
         } catch (error) {
-            setBanner(banner, error.message || 'Failed to log out.', 'error');
+            if (banner) {
+                banner.textContent = error.message || 'Failed to log out.';
+                banner.style.display = 'block';
+            }
         }
     });
 };
@@ -89,7 +151,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
 window.dashboardApi = {
     fetchJson,
-    setBanner,
-    clearBanner,
+    showToast,
+    setErrorBanner,
+    clearErrorBanner,
     formatUserDisplay,
+    debounce,
 };

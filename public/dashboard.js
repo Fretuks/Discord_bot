@@ -1,38 +1,64 @@
 const state = {
     guilds: [],
+    filteredGuilds: [],
     selectedGuildId: null,
     roles: [],
     permissions: null,
     commands: [],
+    botGuildIds: new Set(),
+    botInstalled: false,
+    dirty: false,
+    originalPermissions: null,
 };
 
 const elements = {
-    banner: document.getElementById('banner'),
+    errorBanner: document.getElementById('errorBanner'),
     userDisplay: document.getElementById('userDisplay'),
     sessionExpiry: document.getElementById('sessionExpiry'),
     logoutButton: document.getElementById('logoutButton'),
     guildList: document.getElementById('guildList'),
+    guildListSkeleton: document.getElementById('guildListSkeleton'),
     guildEmpty: document.getElementById('guildEmpty'),
+    guildSearch: document.getElementById('guildSearch'),
+    guildHeaderIcon: document.getElementById('guildHeaderIcon'),
+    guildHeaderName: document.getElementById('guildHeaderName'),
+    guildStatusBadge: document.getElementById('guildStatusBadge'),
+    guildStatusNote: document.getElementById('guildStatusNote'),
+    inviteButton: document.getElementById('inviteButton'),
+    refreshBotButton: document.getElementById('refreshBotButton'),
     tabs: document.querySelectorAll('.tab'),
+    settingsPanel: document.getElementById('settingsPanel'),
     permissionsPanel: document.getElementById('permissionsPanel'),
     warningsPanel: document.getElementById('warningsPanel'),
-    adminRolesSelect: document.getElementById('adminRolesSelect'),
+    adminRolesPicker: document.getElementById('adminRolesPicker'),
     adminUserInput: document.getElementById('adminUserInput'),
     addAdminUserButton: document.getElementById('addAdminUserButton'),
     adminUserChips: document.getElementById('adminUserChips'),
     newCommandInput: document.getElementById('newCommandInput'),
     addCommandButton: document.getElementById('addCommandButton'),
-    commandsTable: document.getElementById('commandsTable'),
+    commandsList: document.getElementById('commandsList'),
+    commandsEmpty: document.getElementById('commandsEmpty'),
+    clearAllCommands: document.getElementById('clearAllCommands'),
+    copyFromGuild: document.getElementById('copyFromGuild'),
     savePermissionsButton: document.getElementById('savePermissionsButton'),
-    permissionsStatus: document.getElementById('permissionsStatus'),
+    discardChangesButton: document.getElementById('discardChangesButton'),
+    saveBar: document.getElementById('saveBar'),
+    botInactiveCallout: document.getElementById('botInactiveCallout'),
     warningsUserInput: document.getElementById('warningsUserInput'),
     fetchWarningsButton: document.getElementById('fetchWarningsButton'),
     warningsList: document.getElementById('warningsList'),
     warningsEmpty: document.getElementById('warningsEmpty'),
+    warningsSpinner: document.getElementById('warningsSpinner'),
     newWarningUserInput: document.getElementById('newWarningUserInput'),
     warningReasonInput: document.getElementById('warningReasonInput'),
+    warningCharCount: document.getElementById('warningCharCount'),
     addWarningButton: document.getElementById('addWarningButton'),
     warningStatus: document.getElementById('warningStatus'),
+    contentSkeleton: document.getElementById('contentSkeleton'),
+    copyModal: document.getElementById('copyModal'),
+    copyGuildSelect: document.getElementById('copyGuildSelect'),
+    cancelCopyButton: document.getElementById('cancelCopyButton'),
+    confirmCopyButton: document.getElementById('confirmCopyButton'),
 };
 
 const dashboardApi = window.dashboardApi;
@@ -40,23 +66,101 @@ const fetchDashboardJson = dashboardApi.fetchJson;
 
 const COMMAND_NAME_REGEX = /^[a-z0-9_-]{1,32}$/i;
 
-const setLoading = (isLoading) => {
-    document.body.classList.toggle('loading', isLoading);
+const clonePermissions = (permissions) => JSON.parse(JSON.stringify(permissions || {}));
+
+const normalizePermissions = (permissions = {}) => ({
+    adminRoleIds: Array.isArray(permissions.adminRoleIds) ? permissions.adminRoleIds : [],
+    adminUserIds: Array.isArray(permissions.adminUserIds) ? permissions.adminUserIds : [],
+    commandPermissions: permissions.commandPermissions || {},
+});
+
+const setLoadingGuilds = (isLoading) => {
+    elements.guildList.hidden = isLoading;
+    elements.guildListSkeleton.hidden = !isLoading;
+};
+
+const setLoadingDetails = (isLoading) => {
+    elements.contentSkeleton.hidden = !isLoading;
+    if (isLoading) {
+        elements.settingsPanel.hidden = true;
+        elements.permissionsPanel.hidden = true;
+        elements.warningsPanel.hidden = true;
+    }
+};
+
+const setDirty = (isDirty) => {
+    state.dirty = isDirty;
+    elements.saveBar.hidden = !isDirty;
+};
+
+const parseIdList = (value) => {
+    if (!value) {
+        return [];
+    }
+    return Array.from(
+        new Set(
+            value
+                .split(/[\s,\n]+/)
+                .map((entry) => entry.trim())
+                .filter(Boolean),
+        ),
+    );
+};
+
+const setError = (error) => {
+    if (!error) {
+        dashboardApi.clearErrorBanner(elements.errorBanner);
+        return;
+    }
+    dashboardApi.setErrorBanner(elements.errorBanner, error.message || 'Something went wrong.', error.payload || error);
+};
+
+const handleFetchError = (error, fallback) => {
+    if (error?.code === 'BOT_NOT_IN_GUILD') {
+        return;
+    }
+    setError(error || {message: fallback});
+};
+
+const updateGuildHeader = (guild) => {
+    if (!guild) {
+        elements.guildHeaderName.textContent = 'Select a guild';
+        elements.guildHeaderIcon.src = '';
+        elements.guildStatusBadge.textContent = '';
+        elements.guildStatusNote.textContent = '';
+        return;
+    }
+    elements.guildHeaderName.textContent = guild.name;
+    if (guild.icon) {
+        elements.guildHeaderIcon.src = `https://cdn.discordapp.com/icons/${guild.id}/${guild.icon}.png`;
+    } else {
+        elements.guildHeaderIcon.removeAttribute('src');
+    }
+    if (state.botInstalled) {
+        elements.guildStatusBadge.textContent = 'Bot added';
+        elements.guildStatusBadge.className = 'status-badge status-badge--ok';
+        elements.guildStatusNote.textContent = 'Settings are active.';
+    } else {
+        elements.guildStatusBadge.textContent = 'Not added';
+        elements.guildStatusBadge.className = 'status-badge status-badge--warn';
+        elements.guildStatusNote.textContent = 'The bot isn’t in this server yet. Invite it to configure settings.';
+    }
 };
 
 const renderGuilds = () => {
     elements.guildList.innerHTML = '';
-    if (state.guilds.length === 0) {
+    if (state.filteredGuilds.length === 0) {
         elements.guildEmpty.hidden = false;
         return;
     }
-
     elements.guildEmpty.hidden = true;
-    state.guilds.forEach((guild) => {
+    state.filteredGuilds.forEach((guild) => {
         const item = document.createElement('button');
         item.type = 'button';
         item.className = `guild-item${state.selectedGuildId === guild.id ? ' active' : ''}`;
         item.dataset.guildId = guild.id;
+        const info = document.createElement('div');
+        info.className = 'guild-item__info';
         const icon = document.createElement('img');
         if (guild.icon) {
             icon.src = `https://cdn.discordapp.com/icons/${guild.id}/${guild.icon}.png`;
@@ -66,30 +170,117 @@ const renderGuilds = () => {
         }
         const name = document.createElement('span');
         name.textContent = guild.name;
-        item.appendChild(icon);
-        item.appendChild(name);
+        info.appendChild(icon);
+        info.appendChild(name);
+
+        const badge = document.createElement('span');
+        const isBotInGuild = state.botGuildIds.size === 0 ? null : state.botGuildIds.has(guild.id);
+        badge.className = `status-pill ${isBotInGuild ? 'status-pill--ok' : 'status-pill--warn'}`;
+        const dot = document.createElement('span');
+        dot.className = 'status-pill__dot';
+        const text = document.createElement('span');
+        text.textContent = isBotInGuild ? 'Bot added' : 'Not added';
+        badge.appendChild(dot);
+        badge.appendChild(text);
+
+        item.appendChild(info);
+        item.appendChild(badge);
         item.addEventListener('click', () => selectGuild(guild.id));
         elements.guildList.appendChild(item);
     });
 };
 
-const renderRolesSelect = () => {
-    elements.adminRolesSelect.innerHTML = '';
-    state.roles
-        .sort((a, b) => b.position - a.position)
-        .forEach((role) => {
-            const option = document.createElement('option');
-            option.value = role.id;
-            option.textContent = role.name;
-            elements.adminRolesSelect.appendChild(option);
-        });
+const renderRolePicker = (container, roles, selectedIds, onChange, options = {}) => {
+    container.innerHTML = '';
+    const wrapper = document.createElement('div');
+    wrapper.className = `multi-picker${options.disabled ? ' multi-picker--disabled' : ''}`;
 
-    if (state.permissions) {
-        const adminRoleIds = new Set(state.permissions.adminRoleIds || []);
-        Array.from(elements.adminRolesSelect.options).forEach((option) => {
-            option.selected = adminRoleIds.has(option.value);
+    const search = document.createElement('input');
+    search.type = 'text';
+    search.className = 'multi-picker__search';
+    search.placeholder = 'Search roles';
+    const list = document.createElement('div');
+    list.className = 'multi-picker__list';
+    const chips = document.createElement('div');
+    chips.className = 'chip-list';
+
+    const renderChips = () => {
+        chips.innerHTML = '';
+        if (selectedIds.length === 0) {
+            const empty = document.createElement('span');
+            empty.className = 'muted';
+            empty.textContent = options.emptyMessage || 'No roles selected.';
+            chips.appendChild(empty);
+            return;
+        }
+        selectedIds.forEach((roleId) => {
+            const role = roles.find((entry) => entry.id === roleId);
+            if (!role) {
+                return;
+            }
+            const chip = document.createElement('span');
+            chip.className = 'chip';
+            chip.textContent = role.name;
+            const removeButton = document.createElement('button');
+            removeButton.type = 'button';
+            removeButton.textContent = '✕';
+            removeButton.addEventListener('click', () => {
+                const next = selectedIds.filter((id) => id !== roleId);
+                selectedIds.splice(0, selectedIds.length, ...next);
+                onChange([...selectedIds]);
+                renderList(search.value);
+                renderChips();
+            });
+            chip.appendChild(removeButton);
+            chips.appendChild(chip);
         });
-    }
+    };
+
+    const renderList = (query = '') => {
+        list.innerHTML = '';
+        const filteredRoles = roles
+            .filter((role) => role.name.toLowerCase().includes(query.toLowerCase()))
+            .sort((a, b) => b.position - a.position);
+        if (filteredRoles.length === 0) {
+            const empty = document.createElement('span');
+            empty.className = 'muted';
+            empty.textContent = 'No matching roles.';
+            list.appendChild(empty);
+            return;
+        }
+        filteredRoles.forEach((role) => {
+            const label = document.createElement('label');
+            const checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.checked = selectedIds.includes(role.id);
+            checkbox.disabled = options.disabled;
+            checkbox.addEventListener('change', () => {
+                if (checkbox.checked) {
+                    if (!selectedIds.includes(role.id)) {
+                        selectedIds.push(role.id);
+                    }
+                } else {
+                    const next = selectedIds.filter((id) => id !== role.id);
+                    selectedIds.splice(0, selectedIds.length, ...next);
+                }
+                onChange([...selectedIds]);
+                renderChips();
+            });
+            label.appendChild(checkbox);
+            label.appendChild(document.createTextNode(role.name));
+            list.appendChild(label);
+        });
+    };
+
+    search.addEventListener('input', () => renderList(search.value));
+
+    renderList();
+    renderChips();
+
+    wrapper.appendChild(search);
+    wrapper.appendChild(list);
+    wrapper.appendChild(chips);
+    container.appendChild(wrapper);
 };
 
 const renderAdminUsers = () => {
@@ -112,6 +303,7 @@ const renderAdminUsers = () => {
         removeButton.textContent = '✕';
         removeButton.addEventListener('click', () => {
             state.permissions.adminUserIds = adminUserIds.filter((id) => id !== userId);
+            setDirty(true);
             renderAdminUsers();
         });
         chip.appendChild(removeButton);
@@ -128,56 +320,64 @@ const ensureCommandEntry = (commandName) => {
     }
 };
 
-const renderCommandsTable = () => {
-    const tbody = elements.commandsTable.querySelector('tbody');
-    tbody.innerHTML = '';
-
+const renderCommands = () => {
+    elements.commandsList.innerHTML = '';
     const commands = [...new Set(state.commands)].sort();
     if (commands.length === 0) {
-        const row = document.createElement('tr');
-        const cell = document.createElement('td');
-        cell.colSpan = 4;
-        cell.className = 'muted';
-        cell.textContent = 'No commands configured yet. Add one above.';
-        row.appendChild(cell);
-        tbody.appendChild(row);
+        elements.commandsEmpty.hidden = false;
         return;
     }
+    elements.commandsEmpty.hidden = true;
 
     commands.forEach((commandName) => {
         ensureCommandEntry(commandName);
         const commandConfig = state.permissions.commandPermissions[commandName];
-        const row = document.createElement('tr');
 
-        const nameCell = document.createElement('td');
-        nameCell.textContent = commandName;
+        const card = document.createElement('div');
+        card.className = `command-card${state.botInstalled ? '' : ' command-card--disabled'}`;
+        const header = document.createElement('div');
+        header.className = 'command-card__header';
 
-        const roleCell = document.createElement('td');
-        const roleSelect = document.createElement('select');
-        roleSelect.multiple = true;
-        roleSelect.className = 'multi-select';
-        state.roles
-            .sort((a, b) => b.position - a.position)
-            .forEach((role) => {
-                const option = document.createElement('option');
-                option.value = role.id;
-                option.textContent = role.name;
-                option.selected = commandConfig.allowedRoleIds.includes(role.id);
-                roleSelect.appendChild(option);
-            });
-        roleSelect.addEventListener('change', () => {
-            commandConfig.allowedRoleIds = Array.from(roleSelect.selectedOptions).map((opt) => opt.value);
-        });
-        roleCell.appendChild(roleSelect);
+        const title = document.createElement('strong');
+        title.textContent = `/${commandName}`;
 
-        const userCell = document.createElement('td');
+        const toggleLabel = document.createElement('label');
+        toggleLabel.className = 'toggle';
+        const toggle = document.createElement('input');
+        toggle.type = 'checkbox';
+        toggle.checked = commandConfig.allowedRoleIds.length > 0 || commandConfig.allowedUserIds.length > 0;
+        toggleLabel.appendChild(toggle);
+        toggleLabel.appendChild(document.createTextNode('Restricted'));
+
+        header.appendChild(title);
+        header.appendChild(toggleLabel);
+
+        const body = document.createElement('div');
+        body.className = 'command-card__body';
+
+        const roleSection = document.createElement('div');
+        const roleLabel = document.createElement('p');
+        roleLabel.className = 'muted';
+        roleLabel.textContent = 'Allowed roles';
+        const rolePicker = document.createElement('div');
+        roleSection.appendChild(roleLabel);
+        roleSection.appendChild(rolePicker);
+
+        const userSection = document.createElement('div');
+        const userLabel = document.createElement('p');
+        userLabel.className = 'muted';
+        userLabel.textContent = 'Allowed users';
         const userInput = document.createElement('input');
         userInput.type = 'text';
-        userInput.placeholder = 'User ID';
+        userInput.placeholder = 'Paste user IDs';
         const addUserButton = document.createElement('button');
         addUserButton.type = 'button';
         addUserButton.className = 'button';
         addUserButton.textContent = 'Add';
+        const userControls = document.createElement('div');
+        userControls.className = 'input-row';
+        userControls.appendChild(userInput);
+        userControls.appendChild(addUserButton);
         const chipList = document.createElement('div');
         chipList.className = 'chip-list';
 
@@ -199,6 +399,7 @@ const renderCommandsTable = () => {
                 remove.textContent = '✕';
                 remove.addEventListener('click', () => {
                     commandConfig.allowedUserIds = commandConfig.allowedUserIds.filter((id) => id !== userId);
+                    setDirty(true);
                     renderUserChips();
                 });
                 chip.appendChild(remove);
@@ -206,44 +407,119 @@ const renderCommandsTable = () => {
             });
         };
 
-        addUserButton.addEventListener('click', () => {
-            const value = userInput.value.trim();
-            if (!value) {
+        const addUsers = () => {
+            const values = parseIdList(userInput.value);
+            if (values.length === 0) {
                 return;
             }
-            if (!commandConfig.allowedUserIds.includes(value)) {
-                commandConfig.allowedUserIds.push(value);
-                renderUserChips();
-            }
+            const merged = Array.from(new Set([...commandConfig.allowedUserIds, ...values]));
+            commandConfig.allowedUserIds = merged;
+            setDirty(true);
             userInput.value = '';
+            renderUserChips();
+        };
+
+        addUserButton.addEventListener('click', addUsers);
+        userInput.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                addUsers();
+            }
         });
 
-        const userControls = document.createElement('div');
-        userControls.className = 'button-row';
-        userControls.appendChild(userInput);
-        userControls.appendChild(addUserButton);
-        userCell.appendChild(userControls);
-        userCell.appendChild(chipList);
+        userSection.appendChild(userLabel);
+        userSection.appendChild(userControls);
+        userSection.appendChild(chipList);
         renderUserChips();
 
-        const actionCell = document.createElement('td');
+        const actions = document.createElement('div');
         const clearButton = document.createElement('button');
         clearButton.type = 'button';
         clearButton.className = 'button button--ghost';
-        clearButton.textContent = 'Clear restrictions';
+        clearButton.textContent = 'Clear';
         clearButton.addEventListener('click', () => {
             commandConfig.allowedRoleIds = [];
             commandConfig.allowedUserIds = [];
-            renderCommandsTable();
+            toggle.checked = false;
+            setDirty(true);
+            renderCommands();
         });
-        actionCell.appendChild(clearButton);
+        actions.appendChild(clearButton);
 
-        row.appendChild(nameCell);
-        row.appendChild(roleCell);
-        row.appendChild(userCell);
-        row.appendChild(actionCell);
-        tbody.appendChild(row);
+        body.appendChild(roleSection);
+        body.appendChild(userSection);
+        body.appendChild(actions);
+
+        toggle.addEventListener('change', () => {
+            setDirty(true);
+            if (!toggle.checked) {
+                commandConfig.allowedRoleIds = [];
+                commandConfig.allowedUserIds = [];
+                setDirty(true);
+            }
+            renderCommands();
+        });
+
+        const controlsDisabled = !state.botInstalled || !toggle.checked;
+        userInput.disabled = controlsDisabled;
+        addUserButton.disabled = controlsDisabled;
+
+        renderRolePicker(
+            rolePicker,
+            state.roles,
+            commandConfig.allowedRoleIds,
+            (selected) => {
+                commandConfig.allowedRoleIds = selected;
+                setDirty(true);
+            },
+            {
+                disabled: !state.botInstalled || !toggle.checked,
+                emptyMessage: toggle.checked ? 'Select roles to allow.' : 'Allow all roles.',
+            },
+        );
+
+        card.appendChild(header);
+        card.appendChild(body);
+        elements.commandsList.appendChild(card);
     });
+};
+
+const renderPanels = () => {
+    renderRolePicker(
+        elements.adminRolesPicker,
+        state.roles,
+        state.permissions.adminRoleIds,
+        (selected) => {
+            state.permissions.adminRoleIds = selected;
+            setDirty(true);
+        },
+        {
+            disabled: !state.botInstalled,
+            emptyMessage: state.botInstalled ? 'Select roles to grant admin access.' : 'Invite bot to load roles.',
+        },
+    );
+    renderAdminUsers();
+    renderCommands();
+
+    if (!state.botInstalled) {
+        elements.settingsPanel.classList.add('panel--disabled');
+        elements.permissionsPanel.classList.add('panel--disabled');
+        elements.botInactiveCallout.hidden = false;
+    } else {
+        elements.settingsPanel.classList.remove('panel--disabled');
+        elements.permissionsPanel.classList.remove('panel--disabled');
+        elements.botInactiveCallout.hidden = true;
+    }
+};
+
+const updateBotStatusControls = () => {
+    if (state.botInstalled) {
+        elements.inviteButton.hidden = true;
+        elements.refreshBotButton.hidden = true;
+    } else {
+        elements.inviteButton.hidden = false;
+        elements.refreshBotButton.hidden = false;
+    }
 };
 
 const loadSession = async () => {
@@ -256,33 +532,55 @@ const loadSession = async () => {
 };
 
 const loadGuilds = async () => {
-    const data = await fetchDashboardJson('/api/guilds');
-    state.guilds = data.guilds || [];
-    if (state.guilds.length > 0) {
-        state.selectedGuildId = state.guilds[0].id;
+    setLoadingGuilds(true);
+    try {
+        const data = await fetchDashboardJson('/api/guilds');
+        state.guilds = data.guilds || [];
+        state.filteredGuilds = [...state.guilds];
+        if (state.guilds.length > 0 && !state.selectedGuildId) {
+            state.selectedGuildId = state.guilds[0].id;
+        }
+        renderGuilds();
+    } finally {
+        setLoadingGuilds(false);
     }
-    renderGuilds();
+};
+
+const loadBotGuilds = async () => {
+    try {
+        const data = await fetchDashboardJson('/api/bot/guilds');
+        state.botGuildIds = new Set(data.guildIds || []);
+    } catch (error) {
+        state.botGuildIds = new Set();
+        handleFetchError(error, 'Failed to fetch bot status.');
+    }
+};
+
+const updateBotInstalled = () => {
+    state.botInstalled = state.selectedGuildId ? state.botGuildIds.has(state.selectedGuildId) : false;
 };
 
 const loadGuildDetails = async () => {
     if (!state.selectedGuildId) {
         return;
     }
-    setLoading(true);
+    setLoadingDetails(true);
+    setError(null);
+    setDirty(false);
+
+    const guild = state.guilds.find((entry) => entry.id === state.selectedGuildId);
+    updateBotInstalled();
+    updateGuildHeader(guild);
+    updateBotStatusControls();
+
     try {
-        const [permissionsData, rolesData, commandsData] = await Promise.all([
+        const [permissionsData, commandsData] = await Promise.all([
             fetchDashboardJson(`/api/guilds/${state.selectedGuildId}/permissions`),
-            fetchDashboardJson(`/api/guilds/${state.selectedGuildId}/roles`),
             fetchDashboardJson(`/api/guilds/${state.selectedGuildId}/commands`),
         ]);
 
-        state.permissions = permissionsData.permissions || {
-            adminRoleIds: [],
-            adminUserIds: [],
-            commandPermissions: {},
-        };
+        state.permissions = normalizePermissions(permissionsData.permissions || {});
         state.permissions.commandPermissions = state.permissions.commandPermissions || {};
-        state.roles = rolesData.roles || [];
         state.commands = commandsData.commands || [];
 
         Object.keys(state.permissions.commandPermissions).forEach((commandName) => {
@@ -291,33 +589,55 @@ const loadGuildDetails = async () => {
             }
         });
 
-        renderRolesSelect();
-        renderAdminUsers();
-        renderCommandsTable();
-        elements.permissionsStatus.textContent = '';
-        dashboardApi.clearBanner(elements.banner);
+        if (state.botInstalled) {
+            try {
+                const rolesData = await fetchDashboardJson(`/api/guilds/${state.selectedGuildId}/roles`);
+                state.roles = rolesData.roles || [];
+            } catch (error) {
+                if (error?.code === 'BOT_NOT_IN_GUILD') {
+                    state.botInstalled = false;
+                    state.roles = [];
+                } else {
+                    handleFetchError(error, 'Failed to fetch roles.');
+                }
+            }
+        } else {
+            state.roles = [];
+        }
+
+        updateGuildHeader(guild);
+        updateBotStatusControls();
+        state.originalPermissions = clonePermissions(state.permissions);
+        renderPanels();
+        const activeTab = document.querySelector('.tab.active')?.dataset.tab || 'settings';
+        switchTab(activeTab);
     } catch (error) {
-        dashboardApi.setBanner(elements.banner, error.message || 'Failed to load guild data.');
+        handleFetchError(error, 'Failed to load guild data.');
     } finally {
-        setLoading(false);
+        setLoadingDetails(false);
     }
 };
 
 const selectGuild = async (guildId) => {
+    if (state.dirty) {
+        const proceed = window.confirm('You have unsaved changes. Discard them and switch guilds?');
+        if (!proceed) {
+            return;
+        }
+    }
     state.selectedGuildId = guildId;
     renderGuilds();
     await loadGuildDetails();
 };
 
 const addAdminUser = () => {
-    const value = elements.adminUserInput.value.trim();
-    if (!value) {
+    const values = parseIdList(elements.adminUserInput.value);
+    if (values.length === 0) {
         return;
     }
-    if (!state.permissions.adminUserIds.includes(value)) {
-        state.permissions.adminUserIds.push(value);
-    }
+    state.permissions.adminUserIds = Array.from(new Set([...state.permissions.adminUserIds, ...values]));
     elements.adminUserInput.value = '';
+    setDirty(true);
     renderAdminUsers();
 };
 
@@ -327,14 +647,15 @@ const addCommand = () => {
         return;
     }
     if (!COMMAND_NAME_REGEX.test(value)) {
-        dashboardApi.setBanner(elements.banner, 'Command name must be 1-32 characters and use letters, numbers, - or _.');
+        setError({message: 'Command name must be 1-32 characters and use letters, numbers, - or _.'});
         return;
     }
     if (!state.commands.includes(value)) {
         state.commands.push(value);
+        setDirty(true);
     }
     elements.newCommandInput.value = '';
-    renderCommandsTable();
+    renderCommands();
 };
 
 const savePermissions = async () => {
@@ -342,38 +663,38 @@ const savePermissions = async () => {
         return;
     }
 
-    const adminRoleIds = Array.from(elements.adminRolesSelect.selectedOptions).map((option) => option.value);
-    state.permissions.adminRoleIds = adminRoleIds;
-
-    const payload = {
-        adminRoleIds: state.permissions.adminRoleIds,
-        adminUserIds: state.permissions.adminUserIds,
-        commandPermissions: state.permissions.commandPermissions,
-    };
-
-    setLoading(true);
+    setLoadingDetails(true);
     try {
         const data = await fetchDashboardJson(`/api/guilds/${state.selectedGuildId}/permissions`, {
             method: 'PATCH',
-            body: JSON.stringify(payload),
+            body: JSON.stringify(state.permissions),
         });
-        state.permissions = data.permissions;
-        elements.permissionsStatus.textContent = 'Permissions saved successfully.';
-        dashboardApi.setBanner(elements.banner, 'Permissions updated successfully.', 'success');
-        renderRolesSelect();
-        renderAdminUsers();
-        renderCommandsTable();
+        state.permissions = normalizePermissions(data.permissions || {});
+        state.originalPermissions = clonePermissions(state.permissions);
+        setDirty(false);
+        dashboardApi.showToast('Permissions saved.', 'success');
+        renderPanels();
     } catch (error) {
-        dashboardApi.setBanner(elements.banner, error.message || 'Failed to save permissions.');
+        handleFetchError(error, 'Failed to save permissions.');
     } finally {
-        setLoading(false);
+        setLoadingDetails(false);
     }
+};
+
+const discardChanges = () => {
+    if (!state.originalPermissions) {
+        return;
+    }
+    state.permissions = clonePermissions(state.originalPermissions);
+    setDirty(false);
+    renderPanels();
 };
 
 const switchTab = (tabName) => {
     elements.tabs.forEach((tab) => {
         tab.classList.toggle('active', tab.dataset.tab === tabName);
     });
+    elements.settingsPanel.hidden = tabName !== 'settings';
     elements.permissionsPanel.hidden = tabName !== 'permissions';
     elements.warningsPanel.hidden = tabName !== 'warnings';
 };
@@ -381,10 +702,10 @@ const switchTab = (tabName) => {
 const fetchWarnings = async () => {
     const userId = elements.warningsUserInput.value.trim();
     if (!userId) {
-        dashboardApi.setBanner(elements.banner, 'Enter a user ID to fetch warnings.');
+        setError({message: 'Enter a user ID to fetch warnings.'});
         return;
     }
-    setLoading(true);
+    elements.warningsSpinner.hidden = false;
     try {
         const data = await fetchDashboardJson(`/api/guilds/${state.selectedGuildId}/warnings/${userId}`);
         const warnings = data.warnings || [];
@@ -395,17 +716,48 @@ const fetchWarnings = async () => {
             elements.warningsEmpty.hidden = true;
             warnings.forEach((warning) => {
                 const item = document.createElement('li');
+                item.className = 'warning-item';
+                const text = document.createElement('p');
+                text.textContent = warning.reason;
+                const meta = document.createElement('div');
+                meta.className = 'warning-item__meta';
                 const dateText = warning.createdAt ? new Date(warning.createdAt).toLocaleString() : 'Unknown date';
-                item.textContent = `${warning.reason} (Moderator: ${warning.moderatorId || 'Unknown'}) — ${dateText}`;
+                const moderator = document.createElement('span');
+                moderator.textContent = `Moderator: ${warning.moderatorId || 'Unknown'}`;
+                const copyButton = document.createElement('button');
+                copyButton.type = 'button';
+                copyButton.className = 'button button--ghost';
+                copyButton.textContent = 'Copy moderator ID';
+                copyButton.addEventListener('click', async () => {
+                    if (!warning.moderatorId) {
+                        return;
+                    }
+                    try {
+                        await navigator.clipboard.writeText(warning.moderatorId);
+                        dashboardApi.showToast('Moderator ID copied.', 'success');
+                    } catch (error) {
+                        dashboardApi.showToast('Unable to copy moderator ID.', 'error');
+                    }
+                });
+                meta.appendChild(moderator);
+                meta.appendChild(document.createElement('span')).textContent = dateText;
+                item.appendChild(text);
+                item.appendChild(meta);
+                item.appendChild(copyButton);
                 elements.warningsList.appendChild(item);
             });
         }
-        dashboardApi.clearBanner(elements.banner);
+        setError(null);
     } catch (error) {
-        dashboardApi.setBanner(elements.banner, error.message || 'Failed to fetch warnings.');
+        handleFetchError(error, 'Failed to fetch warnings.');
     } finally {
-        setLoading(false);
+        elements.warningsSpinner.hidden = true;
     }
+};
+
+const updateWarningCount = () => {
+    const length = elements.warningReasonInput.value.length;
+    elements.warningCharCount.textContent = `${length}/200`;
 };
 
 const addWarning = async () => {
@@ -415,8 +767,12 @@ const addWarning = async () => {
         elements.warningStatus.textContent = 'User ID and reason are required.';
         return;
     }
+    if (reason.length > 200) {
+        elements.warningStatus.textContent = 'Reason must be under 200 characters.';
+        return;
+    }
 
-    setLoading(true);
+    elements.warningStatus.textContent = '';
     try {
         const data = await fetchDashboardJson(`/api/guilds/${state.selectedGuildId}/warnings/${userId}`, {
             method: 'POST',
@@ -424,23 +780,79 @@ const addWarning = async () => {
         });
         elements.warningStatus.textContent = `Warning added. Total warnings: ${data.warnings?.length || 0}`;
         elements.warningReasonInput.value = '';
-        dashboardApi.clearBanner(elements.banner);
+        updateWarningCount();
+        dashboardApi.showToast('Warning saved.', 'success');
     } catch (error) {
-        dashboardApi.setBanner(elements.banner, error.message || 'Failed to add warning.');
+        handleFetchError(error, 'Failed to add warning.');
+    }
+};
+
+const refreshBotStatus = async () => {
+    await loadBotGuilds();
+    updateBotInstalled();
+    const guild = state.guilds.find((entry) => entry.id === state.selectedGuildId);
+    updateGuildHeader(guild);
+    updateBotStatusControls();
+    renderPanels();
+};
+
+const openInvite = async () => {
+    try {
+        const data = await fetchDashboardJson(`/api/invite-url?guildId=${state.selectedGuildId}`);
+        if (data.inviteUrl) {
+            window.open(data.inviteUrl, '_blank', 'noopener,noreferrer');
+        }
+    } catch (error) {
+        handleFetchError(error, 'Failed to generate invite URL.');
+    }
+};
+
+const openCopyModal = () => {
+    elements.copyGuildSelect.innerHTML = '';
+    state.guilds
+        .filter((guild) => guild.id !== state.selectedGuildId)
+        .forEach((guild) => {
+            const option = document.createElement('option');
+            option.value = guild.id;
+            option.textContent = guild.name;
+            elements.copyGuildSelect.appendChild(option);
+        });
+    elements.copyModal.hidden = false;
+};
+
+const closeCopyModal = () => {
+    elements.copyModal.hidden = true;
+};
+
+const confirmCopy = async () => {
+    const guildId = elements.copyGuildSelect.value;
+    if (!guildId) {
+        closeCopyModal();
+        return;
+    }
+    try {
+        const data = await fetchDashboardJson(`/api/guilds/${guildId}/permissions`);
+        state.permissions = normalizePermissions(data.permissions || {});
+        setDirty(true);
+        renderPanels();
+        dashboardApi.showToast('Permissions copied. Review before saving.', 'success');
+    } catch (error) {
+        handleFetchError(error, 'Failed to copy permissions.');
     } finally {
-        setLoading(false);
+        closeCopyModal();
     }
 };
 
 const initDashboard = async () => {
     try {
         await loadSession();
-        await loadGuilds();
+        await Promise.all([loadGuilds(), loadBotGuilds()]);
+        renderGuilds();
         if (state.selectedGuildId) {
             await loadGuildDetails();
         }
     } catch (error) {
-        dashboardApi.setBanner(elements.banner, 'Please log in to access the dashboard.');
+        setError({message: 'Please log in to access the dashboard.'});
         window.location.href = '/';
         return;
     }
@@ -455,10 +867,50 @@ const initDashboard = async () => {
     });
 
     elements.addAdminUserButton.addEventListener('click', addAdminUser);
+    elements.adminUserInput.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') {
+            event.preventDefault();
+            addAdminUser();
+        }
+    });
     elements.addCommandButton.addEventListener('click', addCommand);
     elements.savePermissionsButton.addEventListener('click', savePermissions);
+    elements.discardChangesButton.addEventListener('click', discardChanges);
     elements.fetchWarningsButton.addEventListener('click', fetchWarnings);
     elements.addWarningButton.addEventListener('click', addWarning);
+    elements.warningReasonInput.addEventListener('input', updateWarningCount);
+    elements.inviteButton.addEventListener('click', openInvite);
+    elements.refreshBotButton.addEventListener('click', refreshBotStatus);
+    elements.clearAllCommands.addEventListener('click', () => {
+        Object.keys(state.permissions.commandPermissions).forEach((commandName) => {
+            state.permissions.commandPermissions[commandName] = {
+                allowedRoleIds: [],
+                allowedUserIds: [],
+            };
+        });
+        setDirty(true);
+        renderCommands();
+    });
+    elements.copyFromGuild.addEventListener('click', openCopyModal);
+    elements.cancelCopyButton.addEventListener('click', closeCopyModal);
+    elements.confirmCopyButton.addEventListener('click', confirmCopy);
+    updateWarningCount();
+
+    elements.guildSearch.addEventListener(
+        'input',
+        dashboardApi.debounce((event) => {
+            const query = event.target.value.toLowerCase();
+            state.filteredGuilds = state.guilds.filter((guild) => guild.name.toLowerCase().includes(query));
+            renderGuilds();
+        }, 200),
+    );
+
+    window.addEventListener('beforeunload', (event) => {
+        if (state.dirty) {
+            event.preventDefault();
+            event.returnValue = '';
+        }
+    });
 };
 
 document.addEventListener('DOMContentLoaded', () => {

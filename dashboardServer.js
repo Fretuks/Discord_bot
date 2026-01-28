@@ -38,6 +38,10 @@ const DISCORD_BOT_TOKEN =
     process.env.DISCORD_BOT_TOKEN ||
     config.discordBotToken ||
     config.token;
+const DASHBOARD_INVITE_PERMISSIONS = Number.parseInt(
+    process.env.DASHBOARD_INVITE_PERMISSIONS || config.dashboardInvitePermissions || '0',
+    10,
+);
 const DASHBOARD_CLIENT_URL =
     process.env.DASHBOARD_CLIENT_URL ||
     config.dashboardClientUrl ||
@@ -59,9 +63,14 @@ const DISCORD_API_BASE = 'https://discord.com/api';
 const DISCORD_OAUTH_BASE = 'https://discord.com/oauth2';
 const COMMANDS_PATH = path.join(__dirname, 'commands.json');
 const GUILD_CACHE_TTL_MS = 5 * 60 * 1000;
+const BOT_GUILD_CACHE_TTL_MS = 60 * 1000;
 const BOT_TOKEN_ERROR_MESSAGE = 'Missing Discord bot token.';
 
 const sessionStore = new Map();
+const botGuildCache = {
+    guildIds: null,
+    fetchedAt: 0,
+};
 
 const parseCookies = (headerValue) => {
     const cookies = {};
@@ -153,12 +162,12 @@ const getDiscordStatusCode = (error) => {
 const sendDiscordApiError = (res, error, fallbackMessage) => {
     const status = getDiscordStatusCode(error);
     if (status === 401 || status === 403) {
-        return res.status(401).json({error: 'Discord authentication expired'});
+        return res.status(401).json({error: 'DISCORD_AUTH', message: 'Discord authentication expired'});
     }
     if (status === 429) {
-        return res.status(503).json({error: 'Discord rate limit exceeded'});
+        return res.status(503).json({error: 'DISCORD_RATE_LIMIT', message: 'Discord rate limit exceeded'});
     }
-    return res.status(502).json({error: fallbackMessage});
+    return res.status(502).json({error: 'DISCORD_REQUEST_FAILED', message: fallbackMessage});
 };
 
 const buildAuthorizationUrl = (state) => {
@@ -224,6 +233,55 @@ const fetchDiscordGuildRoles = async (guildId) => {
     });
 
     return response.data;
+};
+
+const fetchDiscordBotGuilds = async () => {
+    if (!DISCORD_BOT_TOKEN) {
+        throw new Error(BOT_TOKEN_ERROR_MESSAGE);
+    }
+
+    const response = await axios.get(`${DISCORD_API_BASE}/users/@me/guilds`, {
+        headers: {
+            Authorization: `Bot ${DISCORD_BOT_TOKEN}`,
+        },
+    });
+
+    return response.data;
+};
+
+const getCachedBotGuildIds = () => {
+    if (!Array.isArray(botGuildCache.guildIds)) {
+        return null;
+    }
+    if (!botGuildCache.fetchedAt) {
+        return null;
+    }
+    if (Date.now() - botGuildCache.fetchedAt > BOT_GUILD_CACHE_TTL_MS) {
+        return null;
+    }
+    return botGuildCache.guildIds;
+};
+
+const setCachedBotGuildIds = (guildIds) => {
+    botGuildCache.guildIds = guildIds;
+    botGuildCache.fetchedAt = Date.now();
+};
+
+const buildInviteUrl = (guildId) => {
+    if (!DISCORD_CLIENT_ID) {
+        return null;
+    }
+    const permissions = Number.isNaN(DASHBOARD_INVITE_PERMISSIONS) ? 0 : DASHBOARD_INVITE_PERMISSIONS;
+    const params = new URLSearchParams({
+        client_id: DISCORD_CLIENT_ID,
+        scope: 'bot applications.commands',
+        permissions: String(permissions),
+        disable_guild_select: 'true',
+    });
+    if (guildId) {
+        params.set('guild_id', guildId);
+    }
+    return `${DISCORD_OAUTH_BASE}/authorize?${params.toString()}`;
 };
 
 const cacheSessionGuilds = (session, guilds) => {
@@ -434,6 +492,32 @@ const createDashboardApp = () => {
         }
     });
 
+    app.get('/api/bot/guilds', ensureSession, async (req, res) => {
+        try {
+            const cached = getCachedBotGuildIds();
+            if (cached) {
+                return res.json({guildIds: cached});
+            }
+            const guilds = await fetchDiscordBotGuilds();
+            const guildIds = Array.isArray(guilds) ? guilds.map((guild) => guild.id) : [];
+            setCachedBotGuildIds(guildIds);
+            return res.json({guildIds});
+        } catch (error) {
+            if (error.message === BOT_TOKEN_ERROR_MESSAGE) {
+                return res.status(503).json({error: 'BOT_TOKEN_MISSING', message: 'Discord bot token not configured.'});
+            }
+            return sendDiscordApiError(res, error, 'Failed to fetch bot guilds');
+        }
+    });
+
+    app.get('/api/invite-url', ensureSession, (req, res) => {
+        if (!DISCORD_CLIENT_ID) {
+            return res.status(500).json({error: 'MISSING_CLIENT_ID', message: 'Discord client ID not configured.'});
+        }
+        const inviteUrl = buildInviteUrl(req.query.guildId);
+        return res.json({inviteUrl});
+    });
+
     app.get(
         '/api/guilds/:guildId/permissions',
         ensureSession,
@@ -482,8 +566,16 @@ const createDashboardApp = () => {
                 const roles = await fetchDiscordGuildRoles(req.params.guildId);
                 return res.json({roles});
             } catch (error) {
+                const status = getDiscordStatusCode(error);
+                if (status === 403 || status === 404) {
+                    return res.status(409).json({
+                        error: 'BOT_NOT_IN_GUILD',
+                        message: 'Bot not added to this guild.',
+                        inviteUrl: buildInviteUrl(req.params.guildId),
+                    });
+                }
                 if (error.message === BOT_TOKEN_ERROR_MESSAGE) {
-                    return res.status(503).json({error: 'Discord bot token not configured'});
+                    return res.status(503).json({error: 'BOT_TOKEN_MISSING', message: 'Discord bot token not configured.'});
                 }
                 return sendDiscordApiError(res, error, 'Failed to fetch roles');
             }
