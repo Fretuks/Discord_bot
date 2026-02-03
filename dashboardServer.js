@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const axios = require('axios');
 const express = require('express');
-const {addWarning, getWarnings} = require('./services/warnings');
+const {addWarning, getWarnings, clearWarnings} = require('./services/warnings');
 const {getGuildPermissions, updateGuildPermissions} = require('./services/permissions');
 const DEFAULT_SESSION_TTL_MS = 24 * 60 * 60 * 1000;
 const PERMISSION_BITS = {
@@ -129,12 +129,10 @@ const getSession = (sessionId) => {
     if (!session) {
         return null;
     }
-
     if (session.expiresAt <= Date.now()) {
         sessionStore.delete(sessionId);
         return null;
     }
-
     return session;
 };
 
@@ -146,7 +144,6 @@ const ensureOAuthConfig = () => {
     if (!DISCORD_CLIENT_ID || !DISCORD_CLIENT_SECRET || !DISCORD_REDIRECT_URI) {
         return null;
     }
-
     return {
         clientId: DISCORD_CLIENT_ID,
         clientSecret: DISCORD_CLIENT_SECRET,
@@ -179,7 +176,6 @@ const buildAuthorizationUrl = (state) => {
         state,
         prompt: 'consent',
     });
-
     return `${DISCORD_OAUTH_BASE}/authorize?${params.toString()}`;
 };
 
@@ -229,6 +225,24 @@ const fetchDiscordGuildRoles = async (guildId) => {
     const response = await axios.get(`${DISCORD_API_BASE}/guilds/${guildId}/roles`, {
         headers: {
             Authorization: `Bot ${DISCORD_BOT_TOKEN}`,
+        },
+    });
+
+    return response.data;
+};
+
+const fetchDiscordGuildMembersSearch = async (guildId, query) => {
+    if (!DISCORD_BOT_TOKEN) {
+        throw new Error(BOT_TOKEN_ERROR_MESSAGE);
+    }
+
+    const response = await axios.get(`${DISCORD_API_BASE}/guilds/${guildId}/members/search`, {
+        headers: {
+            Authorization: `Bot ${DISCORD_BOT_TOKEN}`,
+        },
+        params: {
+            query,
+            limit: 20,
         },
     });
 
@@ -583,6 +597,54 @@ const createDashboardApp = () => {
     );
 
     app.get(
+        '/api/guilds/:guildId/members',
+        ensureSession,
+        ensureManageableGuild,
+        async (req, res) => {
+            const query = typeof req.query.query === 'string' ? req.query.query.trim() : '';
+            if (query.length < 2) {
+                return res.json({members: []});
+            }
+            try {
+                const members = await fetchDiscordGuildMembersSearch(req.params.guildId, query);
+                const normalized = (members || [])
+                    .map((member) => {
+                        const user = member.user || {};
+                        if (!user.id) {
+                            return null;
+                        }
+                        return {
+                            id: user.id,
+                            user: {
+                                id: user.id,
+                                username: user.username || '',
+                                discriminator: user.discriminator || '',
+                                global_name: user.global_name || '',
+                                avatar: user.avatar || '',
+                            },
+                            nick: member.nick || '',
+                        };
+                    })
+                    .filter(Boolean);
+                return res.json({members: normalized});
+            } catch (error) {
+                const status = getDiscordStatusCode(error);
+                if (status === 403 || status === 404) {
+                    return res.status(409).json({
+                        error: 'BOT_NOT_IN_GUILD',
+                        message: 'Bot not added to this guild.',
+                        inviteUrl: buildInviteUrl(req.params.guildId),
+                    });
+                }
+                if (error.message === BOT_TOKEN_ERROR_MESSAGE) {
+                    return res.status(503).json({error: 'BOT_TOKEN_MISSING', message: 'Discord bot token not configured.'});
+                }
+                return sendDiscordApiError(res, error, 'Failed to search guild members');
+            }
+        },
+    );
+
+    app.get(
         '/api/guilds/:guildId/commands',
         ensureSession,
         ensureManageableGuild,
@@ -648,6 +710,23 @@ const createDashboardApp = () => {
                 });
             } catch (error) {
                 return res.status(500).json({error: 'Failed to add warning'});
+            }
+        },
+    );
+
+    app.delete(
+        '/api/guilds/:guildId/warnings/:userId',
+        ensureSession,
+        ensureManageableGuild,
+        async (req, res) => {
+            try {
+                const warnings = await clearWarnings({
+                    guildId: req.params.guildId,
+                    userId: req.params.userId,
+                });
+                return res.json({warnings});
+            } catch (error) {
+                return res.status(500).json({error: 'Failed to clear warnings'});
             }
         },
     );

@@ -142,12 +142,21 @@
                         <div class="warnings-layout">
                             <div class="warnings-pane">
                                 <h2>User lookup</h2>
-                                <p class="muted">Fetch warnings for a user ID.</p>
+                                <p class="muted">Search members or paste an ID.</p>
+                                <div class="field">
+                                    <label for="warningsUserSearch">Find member</label>
+                                    <input type="search" id="warningsUserSearch" placeholder="Type a username" />
+                                </div>
+                                <div class="member-list" id="warningsUserResults"></div>
+                                <p class="muted" id="warningsSelectedUser">No user selected.</p>
                                 <div class="field">
                                     <label for="warningsUserInput">User ID</label>
                                     <input type="text" id="warningsUserInput" placeholder="123456789" />
                                 </div>
-                                <button class="button" id="fetchWarningsButton">Fetch warnings</button>
+                                <div class="button-row">
+                                    <button class="button" id="fetchWarningsButton">Fetch warnings</button>
+                                    <button class="button button--ghost" id="clearWarningsButton">Clear warnings</button>
+                                </div>
                                 <div class="spinner" id="warningsSpinner" hidden></div>
                             </div>
                             <div class="warnings-pane">

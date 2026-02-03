@@ -9,6 +9,7 @@ const state = {
     botInstalled: false,
     dirty: false,
     originalPermissions: null,
+    selectedWarningUser: null,
 };
 
 const elements = {
@@ -45,7 +46,11 @@ const elements = {
     saveBar: document.getElementById('saveBar'),
     botInactiveCallout: document.getElementById('botInactiveCallout'),
     warningsUserInput: document.getElementById('warningsUserInput'),
+    warningsUserSearch: document.getElementById('warningsUserSearch'),
+    warningsUserResults: document.getElementById('warningsUserResults'),
+    warningsSelectedUser: document.getElementById('warningsSelectedUser'),
     fetchWarningsButton: document.getElementById('fetchWarningsButton'),
+    clearWarningsButton: document.getElementById('clearWarningsButton'),
     warningsList: document.getElementById('warningsList'),
     warningsEmpty: document.getElementById('warningsEmpty'),
     warningsSpinner: document.getElementById('warningsSpinner'),
@@ -85,7 +90,12 @@ const setLoadingDetails = (isLoading) => {
         elements.settingsPanel.hidden = true;
         elements.permissionsPanel.hidden = true;
         elements.warningsPanel.hidden = true;
+        return;
     }
+    const activeTab = document.querySelector('.tab.active')?.dataset.tab || 'settings';
+    elements.settingsPanel.hidden = activeTab !== 'settings';
+    elements.permissionsPanel.hidden = activeTab !== 'permissions';
+    elements.warningsPanel.hidden = activeTab !== 'warnings';
 };
 
 const setDirty = (isDirty) => {
@@ -311,12 +321,56 @@ const renderAdminUsers = () => {
     });
 };
 
+const formatMemberDisplay = (member) => {
+    const user = member?.user || {};
+    const displayName = member?.nick || user.global_name || user.username || 'Unknown user';
+    const tag = user.discriminator && user.discriminator !== '0' ? `#${user.discriminator}` : '';
+    return `${displayName}${tag}`;
+};
+
+const setSelectedWarningUser = (member) => {
+    state.selectedWarningUser = member || null;
+    if (!member) {
+        elements.warningsSelectedUser.textContent = 'No user selected.';
+        return;
+    }
+    elements.warningsSelectedUser.textContent = `${formatMemberDisplay(member)} (${member.id})`;
+    elements.warningsUserInput.value = member.id;
+    elements.newWarningUserInput.value = member.id;
+};
+
+const setManualWarningUser = (userId) => {
+    state.selectedWarningUser = null;
+    if (!userId) {
+        elements.warningsSelectedUser.textContent = 'No user selected.';
+        return;
+    }
+    elements.warningsSelectedUser.textContent = `Using manual ID: ${userId}`;
+};
+
+const resetWarningSelection = () => {
+    setSelectedWarningUser(null);
+    elements.warningsUserResults.innerHTML = '';
+    elements.warningsUserSearch.value = '';
+    elements.warningsUserInput.value = '';
+    elements.newWarningUserInput.value = '';
+    elements.warningsList.innerHTML = '';
+    elements.warningsEmpty.hidden = true;
+};
+
 const ensureCommandEntry = (commandName) => {
     if (!state.permissions.commandPermissions[commandName]) {
         state.permissions.commandPermissions[commandName] = {
             allowedRoleIds: [],
             allowedUserIds: [],
+            restricted: false,
         };
+    }
+    const entry = state.permissions.commandPermissions[commandName];
+    entry.allowedRoleIds = Array.isArray(entry.allowedRoleIds) ? entry.allowedRoleIds : [];
+    entry.allowedUserIds = Array.isArray(entry.allowedUserIds) ? entry.allowedUserIds : [];
+    if (typeof entry.restricted !== 'boolean') {
+        entry.restricted = entry.allowedRoleIds.length > 0 || entry.allowedUserIds.length > 0;
     }
 };
 
@@ -332,6 +386,7 @@ const renderCommands = () => {
     commands.forEach((commandName) => {
         ensureCommandEntry(commandName);
         const commandConfig = state.permissions.commandPermissions[commandName];
+        const isRestricted = Boolean(commandConfig.restricted);
 
         const card = document.createElement('div');
         card.className = `command-card${state.botInstalled ? '' : ' command-card--disabled'}`;
@@ -345,7 +400,7 @@ const renderCommands = () => {
         toggleLabel.className = 'toggle';
         const toggle = document.createElement('input');
         toggle.type = 'checkbox';
-        toggle.checked = commandConfig.allowedRoleIds.length > 0 || commandConfig.allowedUserIds.length > 0;
+        toggle.checked = isRestricted;
         toggleLabel.appendChild(toggle);
         toggleLabel.appendChild(document.createTextNode('Restricted'));
 
@@ -440,7 +495,7 @@ const renderCommands = () => {
         clearButton.addEventListener('click', () => {
             commandConfig.allowedRoleIds = [];
             commandConfig.allowedUserIds = [];
-            toggle.checked = false;
+            commandConfig.restricted = false;
             setDirty(true);
             renderCommands();
         });
@@ -452,15 +507,15 @@ const renderCommands = () => {
 
         toggle.addEventListener('change', () => {
             setDirty(true);
+            commandConfig.restricted = toggle.checked;
             if (!toggle.checked) {
                 commandConfig.allowedRoleIds = [];
                 commandConfig.allowedUserIds = [];
-                setDirty(true);
             }
             renderCommands();
         });
 
-        const controlsDisabled = !state.botInstalled || !toggle.checked;
+        const controlsDisabled = !state.botInstalled || !isRestricted;
         userInput.disabled = controlsDisabled;
         addUserButton.disabled = controlsDisabled;
 
@@ -473,8 +528,8 @@ const renderCommands = () => {
                 setDirty(true);
             },
             {
-                disabled: !state.botInstalled || !toggle.checked,
-                emptyMessage: toggle.checked ? 'Select roles to allow.' : 'Allow all roles.',
+                disabled: !state.botInstalled || !isRestricted,
+                emptyMessage: isRestricted ? 'Select roles to allow.' : 'Allow all roles.',
             },
         );
 
@@ -567,6 +622,7 @@ const loadGuildDetails = async () => {
     setLoadingDetails(true);
     setError(null);
     setDirty(false);
+    resetWarningSelection();
 
     const guild = state.guilds.find((entry) => entry.id === state.selectedGuildId);
     updateBotInstalled();
@@ -699,8 +755,64 @@ const switchTab = (tabName) => {
     elements.warningsPanel.hidden = tabName !== 'warnings';
 };
 
+const resolveWarningUserId = (value) => {
+    if (value && value.trim()) {
+        return value.trim();
+    }
+    return state.selectedWarningUser?.id || '';
+};
+
+const renderWarningMembers = (members = []) => {
+    elements.warningsUserResults.innerHTML = '';
+    if (!members.length) {
+        const empty = document.createElement('span');
+        empty.className = 'muted';
+        empty.textContent = 'No members found.';
+        elements.warningsUserResults.appendChild(empty);
+        return;
+    }
+
+    members.forEach((member) => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = `member-item${state.selectedWarningUser?.id === member.id ? ' active' : ''}`;
+        const meta = document.createElement('div');
+        meta.className = 'member-item__meta';
+        const name = document.createElement('span');
+        name.className = 'member-item__name';
+        name.textContent = formatMemberDisplay(member);
+        const id = document.createElement('span');
+        id.className = 'member-item__id';
+        id.textContent = member.id;
+        meta.appendChild(name);
+        meta.appendChild(id);
+        button.appendChild(meta);
+        button.addEventListener('click', () => {
+            setSelectedWarningUser(member);
+            renderWarningMembers(members);
+        });
+        elements.warningsUserResults.appendChild(button);
+    });
+};
+
+const searchWarningMembers = async (query) => {
+    if (!state.selectedGuildId || !query || query.trim().length < 2) {
+        elements.warningsUserResults.innerHTML = '';
+        return;
+    }
+    try {
+        const data = await fetchDashboardJson(
+            `/api/guilds/${state.selectedGuildId}/members?query=${encodeURIComponent(query.trim())}`,
+        );
+        const members = data.members || [];
+        renderWarningMembers(members);
+    } catch (error) {
+        handleFetchError(error, 'Failed to search members.');
+    }
+};
+
 const fetchWarnings = async () => {
-    const userId = elements.warningsUserInput.value.trim();
+    const userId = resolveWarningUserId(elements.warningsUserInput.value);
     if (!userId) {
         setError({message: 'Enter a user ID to fetch warnings.'});
         return;
@@ -761,7 +873,7 @@ const updateWarningCount = () => {
 };
 
 const addWarning = async () => {
-    const userId = elements.newWarningUserInput.value.trim();
+    const userId = resolveWarningUserId(elements.newWarningUserInput.value);
     const reason = elements.warningReasonInput.value.trim();
     if (!userId || !reason) {
         elements.warningStatus.textContent = 'User ID and reason are required.';
@@ -784,6 +896,29 @@ const addWarning = async () => {
         dashboardApi.showToast('Warning saved.', 'success');
     } catch (error) {
         handleFetchError(error, 'Failed to add warning.');
+    }
+};
+
+const clearWarnings = async () => {
+    const userId = resolveWarningUserId(elements.warningsUserInput.value);
+    if (!userId) {
+        setError({message: 'Select a user to clear warnings.'});
+        return;
+    }
+    const proceed = window.confirm('Clear all warnings for this user?');
+    if (!proceed) {
+        return;
+    }
+    try {
+        await fetchDashboardJson(`/api/guilds/${state.selectedGuildId}/warnings/${userId}`, {
+            method: 'DELETE',
+        });
+        elements.warningsList.innerHTML = '';
+        elements.warningsEmpty.hidden = false;
+        elements.warningStatus.textContent = 'Warnings cleared.';
+        dashboardApi.showToast('Warnings cleared.', 'success');
+    } catch (error) {
+        handleFetchError(error, 'Failed to clear warnings.');
     }
 };
 
@@ -877,8 +1012,23 @@ const initDashboard = async () => {
     elements.savePermissionsButton.addEventListener('click', savePermissions);
     elements.discardChangesButton.addEventListener('click', discardChanges);
     elements.fetchWarningsButton.addEventListener('click', fetchWarnings);
+    elements.clearWarningsButton.addEventListener('click', clearWarnings);
     elements.addWarningButton.addEventListener('click', addWarning);
     elements.warningReasonInput.addEventListener('input', updateWarningCount);
+    elements.warningsUserSearch.addEventListener(
+        'input',
+        dashboardApi.debounce((event) => {
+            searchWarningMembers(event.target.value);
+        }, 250),
+    );
+    elements.warningsUserInput.addEventListener('input', (event) => {
+        setManualWarningUser(event.target.value.trim());
+    });
+    elements.newWarningUserInput.addEventListener('input', (event) => {
+        if (event.target.value.trim()) {
+            setManualWarningUser(event.target.value.trim());
+        }
+    });
     elements.inviteButton.addEventListener('click', openInvite);
     elements.refreshBotButton.addEventListener('click', refreshBotStatus);
     elements.clearAllCommands.addEventListener('click', () => {
@@ -886,6 +1036,7 @@ const initDashboard = async () => {
             state.permissions.commandPermissions[commandName] = {
                 allowedRoleIds: [],
                 allowedUserIds: [],
+                restricted: false,
             };
         });
         setDirty(true);
